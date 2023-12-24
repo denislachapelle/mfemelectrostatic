@@ -1,7 +1,7 @@
 /*    Written by Denis Lachapelle July 2023.
                             MFEM
 //
-// Compile with: make microstrip6
+// Compile with: make electrostatic
 //
 // This code is about microstrip simulation.
 // it compute the electric potential.
@@ -18,8 +18,6 @@
 -rto <raviart thomas order>, default 1.
 
 // DL230531.
-
-8h53
 
 */
 
@@ -105,7 +103,7 @@ int main(int argc, char *argv[])
       fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
   // pcb dielectric 4.7, copper 1 and air 1.
-   double CoeffArray[]={0.0, 0.0, 0.0, 4.7, 1.0};
+   double CoeffArray[]={0.5, 0.5, 0.5, 4.7, 1.0};
    Vector CoeffVector(CoeffArray, 5);
    PWConstCoefficient Coeff(CoeffVector);
 
@@ -228,6 +226,8 @@ int main(int argc, char *argv[])
       sol_sock << "solution\n" << mesh << u
                << "window_title '" << title_str << " Solution'"
                << " keys 'mmc'" << flush;
+
+getchar();
 
 cout << "step compute gradient" << endl;
 
