@@ -19,9 +19,7 @@ tw=2.0;		#trace width.
 dh=5;		#dielectric heigh.
 gw=20;		#ground width.
 hspace=20;
-rad=0.01;	#radius corner.
-tms=0.5;	#target mesh size.
-
+tms=0.1;	#target mesh size.
 
 #
 # Start by drawing the air points, line, loop, surface and physical.
@@ -34,7 +32,7 @@ Points=[    [-gw/2, 0, 0, tms, 1],     #air bottom-left
             [-tw/2, 0, 0, tms, 5],      #trace bottom-left
             [-tw/2, th, 0, tms, 6],     #trace top-left
             [tw/2, th, 0, tms, 7],      #trace top-right
-            [tw/2, 0, 0, tms, 8]
+            [tw/2, 0, 0, tms, 8]	#trace bottom-right
             ]
 
 
@@ -44,14 +42,14 @@ for Point in Points:
    
    
 
-Lines=[    [1, 5, 1],
-            [5, 6, 2],
-            [6, 7, 3],
-            [7, 8, 4],
-            [8, 2, 5],
-            [2, 3, 6],
-            [3, 4, 7],
-            [4, 1, 8]
+Lines=[     [1, 5, 1], 	#air bottom-left
+            [5, 6, 2],	#trace left
+            [6, 7, 3],	#trace top
+            [7, 8, 4],	#trace right
+            [8, 2, 5],	#air horiz-right
+            [2, 3, 6],	#air vert-right
+            [3, 4, 7],	#air top
+            [4, 1, 8]	#air vert-left
             ]
 
 for Line in Lines:
@@ -69,9 +67,9 @@ gmsh.model.occ.addLine(5, 8, 9)        #trace bottom line.
 gmsh.model.occ.addPoint(-gw/2, -dh, 0, 5*tms, 10)        #dielectric bottom left
 gmsh.model.occ.addPoint(gw/2, -dh, 0, 5*tms, 11)        #dielectric bottom right
 
-gmsh.model.occ.addLine(10, 11, 10)       
-gmsh.model.occ.addLine(11, 2, 11)        
-gmsh.model.occ.addLine(1, 10, 12)        
+gmsh.model.occ.addLine(10, 11, 10)	#diel bottom       
+gmsh.model.occ.addLine(11, 2, 11)       #diel right
+gmsh.model.occ.addLine(1, 10, 12)       #diel left
 gmsh.model.occ.addCurveLoop([10, 11, -5, -9, -1, 12], 3)
 gmsh.model.occ.addPlaneSurface([3], 2)
 #
@@ -85,7 +83,7 @@ gmsh.model.occ.synchronize()
 gmsh.model.addPhysicalGroup(1, [9, -4, -3, -2], 1, name="traceline")
 gmsh.model.addPhysicalGroup(1, [10, 11, 6, 7, 8, 12], 2, name="groundline")
 gmsh.model.addPhysicalGroup(2, [1], 3, name="airsurface")
-gmsh.model.addPhysicalGroup(2, [3], 4, name="dielectricsurface")
+gmsh.model.addPhysicalGroup(2, [2], 4, name="dielecsurface")
 
 # We can then generate a 2D mesh...
 gmsh.model.mesh.generate(2)
