@@ -14,5 +14,6 @@ MFEM_BUILD_DIR ?= /home/denislachapelle2003/fem/mfem-4.6
 all: electrostatic
 
 electrostatic: electrostatic.cpp
-	g++ -o electrostatic -O3 -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
+	g++ -g -o electrostatic  -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
+#	g++ -o electrostatic -O3 -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
 

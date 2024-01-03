@@ -19,7 +19,8 @@ tw=2.0;		#trace width.
 dh=5;		#dielectric heigh.
 gw=20;		#ground width.
 hspace=20;
-tms=0.1;	#target mesh size.
+tms=0.5;	#target mesh size.
+tlgap=0.2;	#the gap around the trace for the int boundary.
 
 #
 # Start by drawing the air points, line, loop, surface and physical.
@@ -72,6 +73,17 @@ gmsh.model.occ.addLine(11, 2, 11)       #diel right
 gmsh.model.occ.addLine(1, 10, 12)       #diel left
 gmsh.model.occ.addCurveLoop([10, 11, -5, -9, -1, 12], 3)
 gmsh.model.occ.addPlaneSurface([3], 2)
+
+
+#gmsh.model.occ.addPoint(-5.0, 5, 0.0, tms, 12)
+#gmsh.model.occ.addPoint(5.0, 5, 0.0, tms, 13)
+#gmsh.model.occ.addLine(12, 13, 13)
+
+#gmsh.model.occ.addCircle(0, th/2, 0, 2.5, 13)
+#gmsh.model.occ.synchronize()
+#gmsh.model.mesh.embed(1, [13], 2, 1)
+
+
 #
 #synchronize prior to add physical group.
 #
@@ -80,10 +92,12 @@ gmsh.model.occ.synchronize()
 #add physical groups.
 #
 
-gmsh.model.addPhysicalGroup(1, [9, -4, -3, -2], 1, name="traceline")
-gmsh.model.addPhysicalGroup(1, [10, 11, 6, 7, 8, 12], 2, name="groundline")
+gmsh.model.addPhysicalGroup(1, [9, -4, -3, -2], 2, name="traceline")
+gmsh.model.addPhysicalGroup(1, [10, 11, 6, 7, 8, 12], 1, name="groundline")
 gmsh.model.addPhysicalGroup(2, [1], 3, name="airsurface")
 gmsh.model.addPhysicalGroup(2, [2], 4, name="dielecsurface")
+#gmsh.model.addPhysicalGroup(1, [13], 5, name="integcloseloop")
+
 
 # We can then generate a 2D mesh...
 gmsh.model.mesh.generate(2)

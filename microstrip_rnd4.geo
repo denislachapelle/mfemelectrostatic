@@ -5,7 +5,7 @@
 SetFactory("OpenCASCADE");
 
 th=0.1;		//trace heigh.
-tw=10;		//trace width.
+tw=1.0;		//trace width.
 dh=5;		//dielectric heigh.
 gw=20;		//ground width.
 hspace=20;

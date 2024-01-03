@@ -19,10 +19,9 @@
 
 // DL230531.
 
-
 */
 
-
+#undef SECTION1
 
 #include <mfem.hpp>
 #include <miniapps/common/fem_extras.hpp>
@@ -32,6 +31,8 @@
 
 using namespace std;
 using namespace mfem;
+
+double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u, Mesh& mesh);
 
 int main(int argc, char *argv[])
 {
@@ -104,7 +105,7 @@ int main(int argc, char *argv[])
       fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
   // pcb dielectric 4.7, copper 1 and air 1.
-   double CoeffArray[]={0.5, 0.5, 0.5, 4.7, 1.0};
+   double CoeffArray[]={0.0, 0.0, 0.0, 4.7, 1.0};
    Vector CoeffVector(CoeffArray, 5);
    PWConstCoefficient Coeff(CoeffVector);
 
@@ -148,6 +149,12 @@ int main(int argc, char *argv[])
 //     element solution.
    a.RecoverFEMSolution(X, b, u);
 
+
+//
+// test get gradient.
+//
+
+
 #ifdef SECTION1
  cout << "step get potential" << endl;
 // get the potential value over a square grid.
@@ -156,8 +163,8 @@ int main(int argc, char *argv[])
    int NbrPoints=20*20/Delta/Delta;
    double XYPoints[NbrPoints][2]; //x, y.
 // build a vector with all the grid points.
-   for(i=0, y=0.0; y<19.99; y+=Delta){
-      for(x=-10.0; x<9.99; x+=Delta){
+   for(i=0, y=0.1; y<19.9; y+=Delta){
+      for(x=-9.9; x<9.9; x+=Delta){
          cout<<x<<","<<y<<endl;
          assert(i<NbrPoints);
          XYPoints[i][0]=x; XYPoints[i][1]=y;
@@ -182,6 +189,8 @@ int main(int argc, char *argv[])
       cout<<val[i]<<endl;
    }
    cout<<"MaxVal="<<MaxVal<<endl;
+
+
 
    //print the pointx and y as well as the value in row and column.
    for(i=0, y=0.0; y<19.99; y+=Delta){
@@ -228,7 +237,6 @@ int main(int argc, char *argv[])
                << "window_title '" << title_str << " Solution'"
                << " keys 'mmc'" << flush;
 
-getchar();
 
 cout << "step compute gradient" << endl;
 
@@ -336,8 +344,177 @@ cout << "step compute gradient" << endl;
      delete rt_surf_int_;
    }
 
+   double intgradval=intgrad(-2.0, 4.0, 2.0, 6.0, 13, 0.1, CoeffArray, u, mesh);
+
+   cout << "D3 = " << intgradval << endl;
+
+   //cout << "D4 = " << intgrad(-1.0, 4.0, 1.0, 5.0, 40, 0.1, CoeffArray, u, mesh) << endl;
+
    // 16. Free the used memory.
    delete fec;
    mesh.Save("microstrip1_mfem1.mesh");
    return 0;
 }
+
+
+
+
+/*
+compute the lenght of the line.
+divide by the step to get the sample lenght.
+in a while loop based on lenght.
+check if there is one or more samples.
+then find the middle of the sample.
+get the grad and multiply by sample lenghtand sum.
+
+*/
+
+double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u, Mesh& mesh) {
+   double TotalLenght=2.0*((x1-x0)+(y1-y0));
+   double SampleLenght=TotalLenght/NbrStep;
+   double pos=x0, RunningLenght=0.0, x, y;
+   double CurrentSampleLenght;
+   double grad=0.0;
+   int XY, j=0;
+   enum STATE {BOTTOM_X, RIGHT_Y, TOP_X, LEFT_Y};
+   int state=BOTTOM_X;
+   while(RunningLenght<TotalLenght) {
+      switch(state) {
+
+         case BOTTOM_X:  // from (x0, y0) to the right.
+            XY=1;
+            y=y0;
+            if(pos+SampleLenght<x1) {
+               x=pos+SampleLenght/2.0;
+               pos+=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               x=pos+(x1-pos)/2;
+               CurrentSampleLenght=x1-pos;
+               pos=y0;
+               state=RIGHT_Y;
+               }
+            break;
+
+         case RIGHT_Y:  // from (x1, y0) to the up.
+            XY=0;
+            x=x1;
+            if(pos+SampleLenght<y1) {
+               y=pos+SampleLenght/2.0;
+               pos+=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               y=pos+(y1-pos)/2.0;
+               CurrentSampleLenght=y1-pos;
+               pos=x1;
+               state=TOP_X;
+               }
+            break;
+            
+         case TOP_X:  //from (x1, y1) to the left.
+            XY=1;
+            y=y1;
+            if(pos-SampleLenght>x0) {
+               x=pos-SampleLenght/2.0;
+               pos-=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               x=pos-(-x0+pos)/2.0;
+               CurrentSampleLenght=(-x0+pos);
+               pos=y1;
+               state=LEFT_Y;
+               }
+            break;
+
+         case LEFT_Y:
+            XY=0;
+            x=x0;
+            if(pos-SampleLenght>y0) {
+               y=pos-SampleLenght/2.0;
+               pos-=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               y=pos-(-y0+pos)/2.0;
+               CurrentSampleLenght=(-y0+pos);
+               pos=x0;
+               state=TOP_X;
+               }
+            break;
+         }
+      RunningLenght+=CurrentSampleLenght;
+/*
+int NbrPoints=2;
+   Vector XYPoints(2*NbrPoints); //x, y.
+   if (XY) {
+      XYPoints[0][0]=x;
+      XYPoints[0][1]=y-delta/2; 
+      XYPoints[1][0]=x;
+      XYPoints[1][1]=y+delta/2;
+      }
+   else {
+      XYPoints[0][0]=x-delta/2;
+      XYPoints[0][1]=y;
+      XYPoints[1][0]=x+delta/2;
+      XYPoints[1][1]=y;
+      }   
+*/
+
+   int NbrPoints=2;
+   Vector XYPoints(2*NbrPoints); //x, y.
+   if (XY) {
+      XYPoints[0]=x;
+      XYPoints[1]=y-delta/2; 
+      XYPoints[2]=x;
+      XYPoints[3]=y+delta/2;
+      }
+   else {
+      XYPoints[0]=x-delta/2;
+      XYPoints[1]=y;
+      XYPoints[2]=x+delta/2;
+      XYPoints[3]=y;
+      }   
+      
+   /*
+   XYPoints[0][0]=9.0;
+   XYPoints[0][1]=-0.5; 
+   XYPoints[1][0]=0;
+   XYPoints[1][1]=0;
+   */
+
+   //Transfert the points in the matrix.
+   DenseMatrix point_mat(XYPoints.GetData(), 2, 2);
+   //point_mat.SetCol(0, &XYPoints[0]);
+   //point_mat.SetCol(1, &XYPoints[2]);
+   
+   //point_mat=(double *)XYPoints;
+
+   Array<int> elem_ids(NbrPoints); // el ement ids.
+   Array<IntegrationPoint> ips(NbrPoints);  // the location within the element.
+   //cout << "###, " << j++ << ", " << RunningLenght << " point_mat.Print(); = " << endl; 
+   //point_mat.Print();
+   assert(mesh.FindPoints(point_mat, elem_ids, ips)==2); // find the element and the point in the element.
+   double val[NbrPoints];
+
+   int attr[2];
+   attr[0]=mesh.GetAttribute(elem_ids[0]);
+   attr[1]=mesh.GetAttribute(elem_ids[1]);
+   
+
+   // get the value of each point one by one.
+   int i;
+   for(i=0; i< NbrPoints; i++) {
+      val[i] = u.GetValue(elem_ids[i], ips[i], 2);
+      }
+
+cout << "### " << XYPoints[0] << ", " << XYPoints[1]<< ", " << val[0] << ", " << val[1] << endl;
+
+   grad+=CoeffArray[attr[0]]*CurrentSampleLenght*(val[1]-val[0])/delta; 
+      }
+
+   return grad;
+
+   }
