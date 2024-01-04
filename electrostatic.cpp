@@ -23,8 +23,9 @@
 
 
 
+
 #include <mfem.hpp>
-#include "/mnt/c/mfem-4.5.2/miniapps/common/fem_extras.hpp"
+#include <miniapps/common/fem_extras.hpp>
 #include <fstream>
 #include <iostream>
 
@@ -102,8 +103,8 @@ int main(int argc, char *argv[])
       // essential (Dirichlet) boundary condition. 
       fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
-  // pcb dielectric 4.7, copper 1 and air 1.
-   double CoeffArray[]={0.5, 0.5, 0.5, 4.7, 1.0};
+  // pcb dielectric 4.7 and air 1.
+   double CoeffArray[]={0.0, 0.0, 0.0, 4.7, 1.0};
    Vector CoeffVector(CoeffArray, 5);
    PWConstCoefficient Coeff(CoeffVector);
 

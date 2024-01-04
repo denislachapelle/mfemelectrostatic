@@ -14,8 +14,8 @@ gmsh.initialize()
 
 gmsh.model.add("microstrip_py")
 
-th=1.0;		#trace height.
-tw=2.0;		#trace width.
+th=0.1;		#trace height.
+tw=10.0;		#trace width.
 dh=5;		#dielectric heigh.
 gw=20;		#ground width.
 hspace=20;
@@ -82,10 +82,10 @@ gmsh.model.occ.synchronize()
 #add physical groups.
 #
 
-gmsh.model.addPhysicalGroup(1, [9, -4, -3, -2], 1, name="traceline")
-gmsh.model.addPhysicalGroup(1, [10, 11, 6, 7, 8, 12], 2, name="groundline")
-gmsh.model.addPhysicalGroup(2, [1], 3, name="airsurface")
-gmsh.model.addPhysicalGroup(2, [3], 4, name="dielectricsurface")
+gmsh.model.addPhysicalGroup(1, [9, -4, -3, -2], 2, name="traceline")
+gmsh.model.addPhysicalGroup(1, [10, 11, 6, 7, 8, 12], 1, name="groundline")
+gmsh.model.addPhysicalGroup(2, [1], 4, name="airsurface")
+gmsh.model.addPhysicalGroup(2, [3], 3, name="dielectricsurface")
 
 # We can then generate a 2D mesh...
 gmsh.model.mesh.generate(2)
