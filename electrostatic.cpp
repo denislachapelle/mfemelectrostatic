@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
       fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
   // pcb dielectric 4.7, copper 1 and air 1.
-   double CoeffArray[]={0.0, 0.0, 0.0, 4.7, 1.0};
+   double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 0.0};
    Vector CoeffVector(CoeffArray, 5);
    PWConstCoefficient Coeff(CoeffVector);
 
@@ -344,7 +344,7 @@ cout << "step compute gradient" << endl;
      delete rt_surf_int_;
    }
 
-   double intgradval=intgrad(-2.0, 4.0, 2.0, 6.0, 13, 0.1, CoeffArray, u, mesh);
+   double intgradval=intgrad(-2.0, 4.0, 2.0, 6.0, 130, 0.1, CoeffArray, u, mesh);
 
    cout << "D3 = " << intgradval << endl;
 
