@@ -11,14 +11,16 @@ MFEM_BUILD_DIR ?= /mnt/c/mfem-4.5.2
 
 #COMMON_LIB = -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common
 
-all: electrostatic factor2
+all: electrostatic magnetostatic magnetostatic2d
 
 electrostatic: electrostatic.cpp
 	g++ -g -o electrostatic  -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
 #	g++ -o electrostatic -O3 -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
 
+magnetostatic: magnetostatic.cpp
+	g++ -g -o magnetostatic  -std=c++11 -I$(MFEM_DIR) magnetostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
 
-factor2: factor2.cpp
-	g++ -g -o factor2  -std=c++11 -I$(MFEM_DIR) factor2.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
-#	g++ -o electrostatic -O3 -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
+magnetostatic2d: magnetostatic2d.cpp
+	g++ -g -o magnetostatic2d  -std=c++11 -I$(MFEM_DIR) magnetostatic2d.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common -lrt
+
 

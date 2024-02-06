@@ -104,10 +104,10 @@ int main(int argc, char *argv[])
       // essential (Dirichlet) boundary condition. 
       fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
-  // pcb dielectric 4.7, air 1 and copper 1.
-   //double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 1.0};
+  // pcb dielectric 4.7, copper 1 and air 1.
+   //double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 0.0};
    //for testing I use 1.
-   double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 1.0};
+   double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 0.0};
    
    Vector CoeffVector(CoeffArray, 5);
    PWConstCoefficient Coeff(CoeffVector);
@@ -152,9 +152,8 @@ int main(int argc, char *argv[])
 //     element solution.
    a.RecoverFEMSolution(X, b, u);
 
-//save the gridfuntion class for later use.
-//this is not require, but was done by curiosity.
-   u.Save("ESGridFile.txt");
+
+u.Save("ESGridFile.txt");
 
 //
 // test get gradient.
@@ -350,13 +349,14 @@ cout << "step compute gradient" << endl;
      delete rt_surf_int_;
    }
 
-   if(0) {
-      ifstream infile;
-      infile.open ("ESGridFile.txt");
-      GridFunction g(&mesh, infile);
-      double D3=intgrad(-9.0, 1.0, 9.0, 19.0, 760, 0.01, CoeffArray, g);
-      cout << "charge_D3 = " << D3 << endl;
-      }
+
+   ifstream infile;
+   infile.open ("ESGridFile.txt");
+   GridFunction g(&mesh, infile);
+   double D3=intgrad(-9.0, 1.0, 9.0, 19.0, 760, 0.01, CoeffArray, g);
+
+   cout << "charge_D3 = " << D3 << endl;
+
 
    // 16. Free the used memory.
    delete fec;
@@ -368,19 +368,13 @@ cout << "step compute gradient" << endl;
 
 
 /*
-Function intgrad
-
-// This code compute the line integral of the gradient
-// of the potential computed with electrostatic.cpp.
-// the initial goal was to compare to the result obtain with 
-// the integration on raviart-thomas D-field to get the charge or capacitance.
-
 compute the lenght of the line.
 divide by the step to get the sample lenght.
 in a while loop based on lenght.
 check if there is one or more samples.
 then find the middle of the sample.
-get the grad and multiply by sample lenghtand and coeff and sum.
+get the grad and multiply by sample lenghtand sum.
+
 */
 
 double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u) {

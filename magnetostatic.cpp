@@ -1,13 +1,11 @@
-/*    Written by Denis Lachapelle July 2023.
+/*    Written by Denis Lachapelle Jan 2024.
                             MFEM
 //
-// Compile with: make electrostatic
+// Compile with: make magnetostatic
 //
 // This code is about microstrip simulation.
-// it compute the electric potential.
-// it comupte the gradient of the potential which is the electric field.
-// It perform the integration of the field on both boundary.
-// It is inspired from MFEM Example 27. and with the help of Mark, https://github.com/mfem/mfem/issues/3753
+// it compute the magnetic vector potential.
+// 
 // The mesh is created with gmsh from the file microstrip.geo.
 
 -m <mesh file>, default "microstrip_rnd3.msh".
@@ -16,8 +14,6 @@
 -rt <refine to>, default 1.
 -dgi <>, default gradient integrator. default 1.
 -rto <raviart thomas order>, default 1.
-
-// DL230531.
 
 */
 
@@ -28,41 +24,29 @@
 #include <fstream>
 #include <iostream>
 
+#define TRACEATTRIB 5
 
 using namespace std;
 using namespace mfem;
 
-double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u);
-
 int main(int argc, char *argv[])
 {
+   double CurrentDensity;  //Current density in the trace causing 1 ampere.
    
-   const char *mesh_file = "microstrip_rnd4.msh"; //default mesh file.
+   const char *mesh_file = "microstrip_py.msh"; //default mesh file.
    int order = 1; // default order for potential elements.
-   int irorder = 1; // integration rule order, Default is (basis function order - 1)
-   int rt_order = order; // raviart thomas element order.
    int refineTo = 1; // Default 1 cause no refinement.
-   int dgi = 1; // 1 to use default gradient Integrator.
+
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
-   args.AddOption(&irorder, "-iro", "--irorder", "Gradient integration rule order");
    args.AddOption(&refineTo, "-rt", "--refineto", "Refine to _ elements");
-   args.AddOption(&dgi, "-dgi", "--DefaultGradInt", "Default gradient integrator");
-   args.AddOption(&rt_order, "-rto", "--rt-order", "Raviat Thomas Element order");
    args.ParseCheck();
 
-   int i;
-
-   cout << "step #2" << endl;
-   // 2. Enable hardware devices such as GPUs, and programming models such as
-   //    CUDA, OCCA, RAJA and OpenMP based on command line options.
    Device device("cpu");
    device.Print();
 
-   // 3. Read the mesh from the given mesh file. We can handle triangular,
-   //    quadrilateral, tetrahedral, hexahedral, surface and volume meshes with
-   //    the same code.
+   //  Read the mesh from the given mesh file, triangular elements.
    Mesh mesh(mesh_file, 1, 1);
    int RefineCount = 0;
    while(mesh.GetNE()<refineTo) {
@@ -79,68 +63,118 @@ int main(int argc, char *argv[])
    cout << "mesh.GetNEdges() = "<< mesh.GetNEdges() << endl;
    cout << "mesh.GetNFaces() = "<< mesh.GetNFaces() << endl;
    cout << "mesh.bdr_attributes.Max() = "<< mesh.bdr_attributes.Max() << endl;
+   
+   //compute the area of the physical group tracesurface,
+   //and then compute the current density assuming current is 1A.
+   {
+      int i;
+      double TraceArea=0.0;
+         for(i=0; i<mesh.GetNE(); i++) {
+            if(0) {cout << mesh.GetElementVolume(i) << endl;}
+            if(mesh.GetAttribute(i)==TRACEATTRIB) TraceArea+=mesh.GetElementVolume(i);
+         }
+         CurrentDensity = 1.0/TraceArea; //Current is 1 ampere.
+         cout << "TraceArea =" << TraceArea << endl;
+         cout << "CurrentDensity =" << CurrentDensity << endl;
+   }
+   
+   // setup a VectorRestrictedCoefficient to define the current density
+   // in the trace. DL240129.
+  
+   Array<int> AttrArray(5);
+   //i put 1 marker all over for debug.
+   AttrArray=0; AttrArray[4]=1;  //attribute 4 is the tracesurface.
+   // i put 1.0 in x y and z just to debug.
+   double ArrayJCoeff[]={0.0, 0.0, 1.0};  //current density vector in 3D.
+   Vector VectJCoeff((double *)ArrayJCoeff, 3);
+   VectorConstantCoefficient VCCJ(VectJCoeff);
+   VectorRestrictedCoefficient VRCJ(VCCJ, AttrArray);
+
 
   // 3. Define a finite element space on the mesh. Here we use 
-    //    continuous Lagrange finite elements.
-    FiniteElementCollection *fec = (FiniteElementCollection*)new H1_FECollection(order, dim);
-    FiniteElementSpace fespace(&mesh, fec);
-    int size = fespace.GetTrueVSize();
+    //    nedelec finite elements. ex3.cpp.
+    FiniteElementCollection *Afec = (FiniteElementCollection*)new ND_FECollection(order, dim);
+    FiniteElementSpace Afespace(&mesh, Afec);
+    int size = Afespace.GetTrueVSize();
     cout << "Number of finite element unknowns: " << size << endl;
    
+   
+
    // 4. Create "marker arrays" to define the portions of boundary associated
    //    with each type of boundary condition. These arrays have an entry
    //    corresponding to each boundary attribute.  Placing a '1' in entry i
    //    marks attribute i+1 as being active, '0' is inactive.
    //    in this case there are only dirichelet boundary.
-   
-   Array<int> dbc_bdr(mesh.bdr_attributes.Max());
+  
    assert(mesh.bdr_attributes.Max()==2);
-   dbc_bdr = 0; dbc_bdr[0] = 1; dbc_bdr[1] = 1;
+   Array<int> dbc_bdr(mesh.bdr_attributes.Max());
+   dbc_bdr = 0; dbc_bdr[0] = 1; dbc_bdr[1] = 0;
 
    Array<int> ess_tdof_list(0);
    if (mesh.bdr_attributes.Size())
    {
       // For a continuous basis the linear system must be modified to enforce an
       // essential (Dirichlet) boundary condition. 
-      fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
+      Afespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
-  // pcb dielectric 4.7, air 1 and copper 1.
-   //double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 1.0};
-   //for testing I use 1.
-   double CoeffArray[]={0.0, 0.0, 4.7, 1.0, 1.0};
-   
-   Vector CoeffVector(CoeffArray, 5);
-   PWConstCoefficient Coeff(CoeffVector);
 
- cout << "step #6" << endl;
+
+  // permeability pcb dielectric 1, copper 1 and air 1.
+   double PermCoeffArray[]={0.0, 0.0, 1.0, 1.0, 1.0};
+   Vector PermCoeffVector(PermCoeffArray, 5);
+   PWConstCoefficient PermCoeff(PermCoeffVector);
+
+   cout << "step #6" << endl;
    // 6. Define the solution vector u as a finite element grid function
    //    corresponding to fespace. Initialize u with initial guess of zero.
-   GridFunction u(&fespace);
+   GridFunction u(&Afespace);
    u = 0.0;
 
    // 7. Set up the bilinear form a(.,.) on the finite element space
-   //    corresponding to the Laplacian operator -Delta, by adding the Diffusion
-   //    domain integrator.
-   BilinearForm a(&fespace);
-   a.AddDomainIntegrator(new DiffusionIntegrator(Coeff));
+   //    and add the integrator.
+   BilinearForm a(&Afespace);
+
+   a.AddDomainIntegrator(new CurlCurlIntegrator(PermCoeff));
    a.Assemble();
 
    // 8. Assemble the linear form for the right hand side vector.
-   LinearForm b(&fespace);
+   LinearForm b(&Afespace);
 
    // Set the Dirichlet values in the solution vector
    // the trace is at 1V, the contour is 0V.
-   double BoundaryCoeffArray[]={0.0, 1.0};
+   double BoundaryCoeffArray[]={0.0, 0.0};
    Vector BoundaryCoeffVector(BoundaryCoeffArray, 2);
    PWConstCoefficient BoundaryCoeff(BoundaryCoeffVector);
    u.ProjectBdrCoefficient(BoundaryCoeff, dbc_bdr);
+
+   b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(VRCJ));
+   
+
+   //set the newmann boundary conditions.
+   Array<int> nbc_marker(mesh.bdr_attributes.Max());
+   assert(mesh.bdr_attributes.Max()==2);
+   nbc_marker = 0; nbc_marker[0] = 0; nbc_marker[1] = 1;
+
+   double CurlCoeffArray[]={0.0, 0.0};
+   Vector CurlCoeffVector(CurlCoeffArray, 2);
+   VectorConstantCoefficient CurlCoeff(CurlCoeffVector);
+
+   b.AddBoundaryIntegrator(new BoundaryTangentialLFIntegrator(CurlCoeff), nbc_marker);
+//   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(CurlCoeff)/*, nbc_marker*/);
+
    b.Assemble();
+  // b.finalise();
 
  cout << "step #9" << endl;
    // 9. Construct the linear system.
    OperatorPtr A;
    Vector B, X;
    a.FormLinearSystem(ess_tdof_list, u, b, A, X, B);
+
+   
+  // curlMuInvCurl_->FormLinearSystem(ess_bdr_tdofs_, *a_, *jd_, CurlMuInvCurl, A, RHS);
+
+   cout << "Size of linear system: " << A->Height() << endl;
    
    // 10. Define a simple symmetric Gauss-Seidel preconditioner and use it to
    //     solve the system AX=B with PCG in the symmetric case, and GMRES in the
@@ -160,67 +194,7 @@ int main(int argc, char *argv[])
 // test get gradient.
 //
 
-
-#ifdef SECTION1
- cout << "step get potential" << endl;
-// get the potential value over a square grid.
-// over x and y in step of Delta.
-   double x, y, Delta=0.5;
-   int NbrPoints=20*20/Delta/Delta;
-   double XYPoints[NbrPoints][2]; //x, y.
-// build a vector with all the grid points.
-   for(i=0, y=0.1; y<19.9; y+=Delta){
-      for(x=-9.9; x<9.9; x+=Delta){
-         cout<<x<<","<<y<<endl;
-         assert(i<NbrPoints);
-         XYPoints[i][0]=x; XYPoints[i][1]=y;
-         i++;
-      }
-   }
-
-   //Transfert the points in the matrix.
-   DenseMatrix point_mat(2, NbrPoints);
-   point_mat=(double *)XYPoints;
-
-   Array<int> elem_ids(NbrPoints); // element ids.
-   Array<IntegrationPoint> ips(NbrPoints);  // the location within the element.
-   mesh.FindPoints(point_mat, elem_ids, ips); // find the element and the point in the element.
-   double val[NbrPoints];
-   double MaxVal=0.0;
-   // get the value of each point one by one.
-   for(i=0; i< NbrPoints; i++) {
-      val[i] = u.GetValue(elem_ids[i], ips[i], 2);
-      // find the max.
-      if(val[i]>MaxVal) MaxVal=val[i];
-      cout<<val[i]<<endl;
-   }
-   cout<<"MaxVal="<<MaxVal<<endl;
-
-
-
-   //print the pointx and y as well as the value in row and column.
-   for(i=0, y=0.0; y<19.99; y+=Delta){
-      cout<<endl<<"0, "<<XYPoints[i][0]<<", "<<XYPoints[i][1]<<", "<<val[i];
-      i++;
-         for(x=-10.0+Delta; x<9.99; x+=Delta){
-            assert(i<NbrPoints);
-            cout<<"0, "<<XYPoints[i][0]<<", "<<XYPoints[i][1]<<", "<<val[i];
-            i++;
-         }
-      }
-   //print the point value in row and column.
-   cout<<endl<<"The Matrix"<<endl;
-   for(i=0, y=0.0; y<19.99; y+=Delta){
-      cout<<endl<<val[i];
-      i++;
-         for(x=-10.0+Delta; x<9.99; x+=Delta){
-            assert(i<NbrPoints);
-            cout<<", "<<val[i];
-            i++;
-         }
-      }
-      cout << endl;
-#endif
+   
 
 // 14. Save the refined mesh and the solution. This output can be viewed
    //     later using GLVis: "glvis -m refined.mesh -g sol.gf".
@@ -233,15 +207,18 @@ int main(int argc, char *argv[])
       u.Save(sol_ofs);
    }
 
-   // 15. Send the potential solution by socket to a GLVis server.
-         string title_str = "H1";
+   // 15. Send the magnetic vector potential solution by socket to a GLVis server.
+      string title_str = "magnetic vector potential";
       char vishost[] = "localhost";
       int  visport   = 19916;
       socketstream sol_sock(vishost, visport);
       sol_sock.precision(8);
       sol_sock << "solution\n" << mesh << u
                << "window_title '" << title_str << " Solution'"
-               << " keys 'mmc'" << flush;
+               << " keys 'mmcvvh'" << flush;
+
+   #ifdef NOTDEF
+
 
 
 cout << "step compute gradient" << endl;
@@ -357,9 +334,9 @@ cout << "step compute gradient" << endl;
       double D3=intgrad(-9.0, 1.0, 9.0, 19.0, 760, 0.01, CoeffArray, g);
       cout << "charge_D3 = " << D3 << endl;
       }
-
+#endif
    // 16. Free the used memory.
-   delete fec;
+   delete Afec;
    mesh.Save("microstrip1_mfem1.mesh");
    return 0;
 }
