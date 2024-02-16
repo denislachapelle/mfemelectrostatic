@@ -70,6 +70,8 @@ int main(int argc, char *argv[])
    cout << "mesh.GetNFaces() = "<< mesh.GetNFaces() << endl;
    cout << "mesh.bdr_attributes.Max() = "<< mesh.bdr_attributes.Max() << endl;
    cout << "mesh.attributes.Max() = "<< mesh.attributes.Max() << endl;
+   cout << "mesh.GetNV() = "<< mesh.GetNV() << endl;
+   
    
    // the code is made for 5 attributes.
    assert(mesh.attributes.Max()==5);
@@ -253,6 +255,8 @@ cout << "step compute gradient" << endl;
      D *= -1.0;
    }
 
+   D.Save("GradOfPotGridFile.txt");
+
   //Send the gradient solution by socket to a GLVis server.
    {
      string title_str = "Gradient of magentic potential";
@@ -264,6 +268,45 @@ cout << "step compute gradient" << endl;
 	      << "window_title '" << title_str << " Solution'"
 	      << " keys 'mmcvv'" << flush;
    }
+   
+   Vector Data = D.GetTrueVector();
+   {
+      int Size = Data.Size();
+      int vdim = D.VectorDim();
+      assert(vdim==2);
+      assert(Size%vdim==0);
+      double temp;
+      if(0) for(int i=0; i<Size/2; i++) {
+         temp=Data[i];
+         Data[i]=Data[i+Size/2];
+         Data[i+Size/2]=temp;
+      }
+      if(1) for(int i=0; i<Size; i+=2) {
+         temp=Data[i];
+         Data[i]=-Data[i+1];
+         Data[i+1]=temp;
+      }
+
+
+
+
+      //  D.SetFromTrueDofs(Data);
+   }
+
+   GridFunction ROT90(&fespace_rt, Data);
+
+   //Send the gradient solution by socket to a GLVis server.
+   {
+     string title_str = "suoposed magnetic field";
+     char vishost[] = "localhost";
+     int  visport   = 19916;
+     socketstream sol_sock(vishost, visport);
+     sol_sock.precision(8);
+     sol_sock << "solution\n" << mesh << ROT90
+	      << "window_title '" << title_str << " Solution'"
+	      << " keys 'mmcvvemR'" << flush;
+   }
+
 
 // from ex5.cpp  
 // 14. Save data in the VisIt format
