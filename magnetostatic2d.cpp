@@ -9,11 +9,11 @@
 // The mesh is created with gmsh from the file microstrip.py.
 
 -m <mesh file>, default "microstrip_py.msh".
--o <order potential mesh element order>, default 1.
+-o <order potential mesh element order>, default 2.
 -iro <integration order>, Default 1.
--rt <refine to>, default 1.
+-rft <refine to>, default 1.
 -dgi <>, default gradient integrator. default 1.
--rto <raviart thomas order>, default 1.
+-ndo <nedelec order>, default potential order.
 
 */
 
@@ -34,18 +34,18 @@ int main(int argc, char *argv[])
    double CurrentDensity;  //Current density in the trace causing 1 ampere.
    
    const char *mesh_file = "microstrip_py.msh"; //default mesh file.
-    int order = 1; // default order for potential elements.
+   int order = 2; // default order for potential elements.
    int irorder = 1; // integration rule order, Default is (basis function order - 1)
-   int rt_order = order; // raviart thomas element order.
+   int nd_order = order; // nedelec element order.
    int refineTo = 1; // Default 1 cause no refinement.
    int dgi = 1; // 1 to use default gradient Integrator.
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
    args.AddOption(&irorder, "-iro", "--irorder", "Gradient integration rule order");
-   args.AddOption(&refineTo, "-rt", "--refineto", "Refine to _ elements");
+   args.AddOption(&refineTo, "-rft", "--refineto", "Refine to _ elements");
    args.AddOption(&dgi, "-dgi", "--DefaultGradInt", "Default gradient integrator");
-   args.AddOption(&rt_order, "-rto", "--rt-order", "Raviat Thomas Element order");
+   args.AddOption(&nd_order, "-ndo", "--ndorder", "nedelec Element order");
    args.ParseCheck();
 
    Device device("cpu");
@@ -53,7 +53,9 @@ int main(int argc, char *argv[])
 
    //  Read the mesh from the given mesh file, triangular elements.
    Mesh mesh(mesh_file, 1, 1);
-    cout << "mesh.GetNE() before refine = "<< mesh.GetNE() << endl;
+
+   // Refine the mesh.
+   cout << "mesh.GetNE() before refine = "<< mesh.GetNE() << endl;
    int RefineCount = 0;
    while(mesh.GetNE()<refineTo) {
       mesh.UniformRefinement();
@@ -62,6 +64,8 @@ int main(int argc, char *argv[])
    cout << "Refine " << RefineCount << " times."<<endl; 
    
    int dim = mesh.Dimension();
+   // in this program the mesh shall have dimension of 2.
+   assert(dim == 2);
 
    cout << "mesh.Dimension() = "<< mesh.Dimension() << endl;
    cout << "mesh.GetNE() after refine = "<< mesh.GetNE() << endl;
@@ -96,16 +100,14 @@ int main(int argc, char *argv[])
    Vector CCJ(5); CCJ=0.0; CCJ[4]=CurrentDensity;
    PWConstCoefficient PWCJ(CCJ);
 
-  // 3. Define a finite element space on the mesh. Here we use 
-    //    h1 finite elements. ex0.cpp.
+  // Define a finite element space on the mesh. Here we use 
+  //    h1 finite elements. ex0.cpp.
     FiniteElementCollection *Afec = (FiniteElementCollection*)new H1_FECollection(order, dim);
     FiniteElementSpace Afespace(&mesh, Afec);
     int size = Afespace.GetTrueVSize();
     cout << "Number of finite element unknowns: " << size << endl;
    
-   
-
-   // 4. Create "marker arrays" to define the portions of boundary associated
+   //  Create "marker arrays" to define the portions of boundary associated
    //    with each type of boundary condition. These arrays have an entry
    //    corresponding to each boundary attribute.  Placing a '1' in entry i
    //    marks attribute i+1 as being active, '0' is inactive.
@@ -113,7 +115,9 @@ int main(int argc, char *argv[])
   
    assert(mesh.bdr_attributes.Max()==2);
    Array<int> dbc_bdr(mesh.bdr_attributes.Max());
-   dbc_bdr = 0; dbc_bdr[0] = 1; dbc_bdr[1] = 0;
+   dbc_bdr = 0;
+   dbc_bdr[0] = 1; //dirichelet for groundline physical line.
+   dbc_bdr[1] = 0;
 
    Array<int> ess_tdof_list(0);
    if (mesh.bdr_attributes.Size())
@@ -128,21 +132,23 @@ int main(int argc, char *argv[])
    double PermCoeffArray[]={0.0, 0.0, 1.0, 1.0, 1.0};
    Vector PermCoeffVector(PermCoeffArray, 5);
    PWConstCoefficient PermCoeff(PermCoeffVector);
+   cout << "PermCoeffVector\n";
+   PermCoeffVector.Print(cout, 5);
 
-   cout << "step #6" << endl;
-   // 6. Define the solution vector u as a finite element grid function
+
+   // Define the solution vector u as a finite element grid function
    //    corresponding to fespace. Initialize u with initial guess of zero.
    GridFunction u(&Afespace);
    u = 0.0;
 
-   // 7. Set up the bilinear form a(.,.) on the finite element space
+   // Set up the bilinear form a(.,.) on the finite element space
    //    and add the integrator.
    BilinearForm a(&Afespace);
 
    a.AddDomainIntegrator(new DiffusionIntegrator(PermCoeff));
    a.Assemble();
 
-   // 8. Assemble the linear form for the right hand side vector.
+   // Assemble the linear form for the right hand side vector.
    LinearForm b(&Afespace);
 
    // Set the Dirichlet values in the solution vector
@@ -158,29 +164,23 @@ int main(int argc, char *argv[])
    //set the newmann boundary conditions.
    assert(mesh.bdr_attributes.Max()==2);
    Array<int> nbc_marker(mesh.bdr_attributes.Max());
-   nbc_marker = 0; nbc_marker[0] = 1; nbc_marker[1] = 0;
+   nbc_marker = 0; nbc_marker[0] = 0; nbc_marker[1] = 0;
 
    double CurlCoeffArray[]={0.0, 0.0};
    Vector CurlCoeffVector(CurlCoeffArray, 2);
    VectorConstantCoefficient CurlCoeff(CurlCoeffVector);
 
    b.AddBoundaryIntegrator(new BoundaryTangentialLFIntegrator(CurlCoeff), nbc_marker);
-//   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(CurlCoeff)/*, nbc_marker*/);
-
    b.Assemble();
-   //b.finalise();
-
- cout << "step #9" << endl;
-   // 9. Construct the linear system.
+ 
+   // Construct the linear system.
    OperatorPtr A;
    Vector B, X;
    a.FormLinearSystem(ess_tdof_list, u, b, A, X, B);
 
-   
-  // curlMuInvCurl_->FormLinearSystem(ess_bdr_tdofs_, *a_, *jd_, CurlMuInvCurl, A, RHS);
+   cout << "A->NumRows(): " << A->NumRows() << endl;
+    cout << "A->NumCols(): " << A->NumCols() << endl;
 
-   cout << "Size of linear system: " << A->Height() << endl;
-   
    // 10. Define a simple symmetric Gauss-Seidel preconditioner and use it to
    //     solve the system AX=B with PCG in the symmetric case, and GMRES in the
    //     non-symmetric one.
@@ -225,33 +225,33 @@ int main(int argc, char *argv[])
 cout << "step compute gradient" << endl;
 
    // This section computes the gradient (field).
-   // use raviart thomas basis function.
-   RT_FECollection rt_fec(rt_order, dim);
-   FiniteElementSpace fespace_rt(&mesh, &rt_fec);
-   GridFunction D(&fespace_rt);
+   // use nedelec basis function.
+   ND_FECollection nd_fec(nd_order, dim);
+   FiniteElementSpace nd_fespace(&mesh, &nd_fec);
+   GridFunction D(&nd_fespace);
    {
-     LinearForm epsdT(&fespace_rt);
-     MixedBilinearForm epsGrad(&Afespace, &fespace_rt);
+     LinearForm epsdT(&nd_fespace);
+     MixedBilinearForm epsGrad(&Afespace, &nd_fespace);
      epsGrad.AddDomainIntegrator(new MixedVectorGradientIntegrator(PermCoeff));
      epsGrad.Assemble();
      epsGrad.Finalize();
      epsGrad.Mult(u, epsdT);
 
-     BilinearForm m_rt(&fespace_rt);
-     m_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
-     m_rt.Assemble();
-     m_rt.Finalize();
+     BilinearForm nd_m(&nd_fespace);
+     nd_m.AddDomainIntegrator(new VectorFEMassIntegrator);
+     nd_m.Assemble();
+     nd_m.Finalize();
 
      Array<int> ess_tdof_rt_list;
      OperatorPtr A;
      Vector B, X;
 
      D = 0.0;
-     m_rt.FormLinearSystem(ess_tdof_rt_list, D, epsdT, A, X, B);
+     nd_m.FormLinearSystem(ess_tdof_rt_list, D, epsdT, A, X, B);
 
      GSSmoother M((SparseMatrix&)(*A));
      PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
-     m_rt.RecoverFEMSolution(X, epsdT, D);
+     nd_m.RecoverFEMSolution(X, epsdT, D);
      D *= -1.0;
    }
 
@@ -269,8 +269,28 @@ cout << "step compute gradient" << endl;
 	      << " keys 'mmcvv'" << flush;
    }
    
-   Vector Data = D.GetTrueVector();
+   
+
+   
+   Vector Data( nd_fespace.GetVSize());
+   D.GetTrueDofs(Data);
+   RT_FECollection rt_fec(nd_order-1, dim);
+   FiniteElementSpace rt_fespace(&mesh, &rt_fec);
+   GridFunction ROT90(&rt_fespace, Data);
+
+   //Send the gradient solution by socket to a GLVis server.
    {
+     string title_str = "suoposed magnetic field";
+     char vishost[] = "localhost";
+     int  visport   = 19916;
+     socketstream sol_sock(vishost, visport);
+     sol_sock.precision(8);
+     sol_sock << "solution\n" << mesh << ROT90
+	      << "window_title '" << title_str << " Solution'"
+	      << " keys 'mmcvv'" << flush;
+   }
+
+   if(0)   {
       int Size = Data.Size();
       int vdim = D.VectorDim();
       assert(vdim==2);
@@ -286,27 +306,8 @@ cout << "step compute gradient" << endl;
          Data[i]=-Data[i+1];
          Data[i+1]=temp;
       }
-
-
-
-
-      //  D.SetFromTrueDofs(Data);
+   //  D.SetFromTrueDofs(Data);
    }
-
-   GridFunction ROT90(&fespace_rt, Data);
-
-   //Send the gradient solution by socket to a GLVis server.
-   {
-     string title_str = "suoposed magnetic field";
-     char vishost[] = "localhost";
-     int  visport   = 19916;
-     socketstream sol_sock(vishost, visport);
-     sol_sock.precision(8);
-     sol_sock << "solution\n" << mesh << ROT90
-	      << "window_title '" << title_str << " Solution'"
-	      << " keys 'mmcvvemR'" << flush;
-   }
-
 
 // from ex5.cpp  
 // 14. Save data in the VisIt format
