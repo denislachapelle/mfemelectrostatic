@@ -29,6 +29,10 @@
 using namespace std;
 using namespace mfem;
 
+
+double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u);
+
+
 int main(int argc, char *argv[])
 {
    double CurrentDensity;  //Current density in the trace causing 1 ampere.
@@ -222,8 +226,66 @@ int main(int argc, char *argv[])
                << "window_title '" << title_str << " Solution'"
                << " keys 'mmcvvh'" << flush;
 
+/*compute the line integral along a close path; it should give the magnetomotrice force
+  which are amp*turn. test along different paths and along a path enclosing 1/2 of the
+  center rectangle. */
+double AmpTurn;
+AmpTurn=intgrad(-3.0, 9.0, 3.0, 12.0, 100, 0.01, PermCoeffArray, u);
+cout << "expect 1, AmpTurn=" << AmpTurn <<endl;                 
+AmpTurn=intgrad(-4.0, 9.0, 3.0, 12.0, 100, 0.01, PermCoeffArray, u);
+cout << "expect 1, AmpTurn=" << AmpTurn <<endl;                 
+AmpTurn=intgrad(-4.0, 9.0, 4.0, 12.0, 100, 0.01, PermCoeffArray, u);
+cout << "expect 1, AmpTurn=" << AmpTurn <<endl;                 
+AmpTurn=intgrad(-0.0, 9.0, 3.0, 12.0, 100, 0.01, PermCoeffArray, u);
+cout << "expect 0.5, AmpTurn=" << AmpTurn <<endl;    
+
+
+/*
+Compute the integral over the entire domain.
+Resulting in the Sum and The sum of square.
+Get help from ex38 and ex27 line 639.
+https://en.wikipedia.org/wiki/Gaussian_quadrature
+*/
+double Sum=0.0; //the running summation.
+double SumSquare=0.0;
+double Temp;
+Element *El;   //a pointer to the current element.
+IntegrationRule ir;  //integration rule for the current element.
+IntegrationRules irs;
+ElementTransformation *Trans;
+for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      Trans = mesh.GetElementTransformation(i);
+      El = mesh.GetElement(i);
+      ir = irs.Get(El->GetGeometryType(), order+1/2);
+      Array<double> Weights(ir.GetNPoints());
+      Weights = ir.GetWeights();  //quadrature points weights.
+      if (0) cout << "ir.GetNPoints = " << ir.GetNPoints() << endl;
+      for(int j=0; j<ir.GetNPoints(); j++)
+      {
+         Trans->SetIntPoint(&ir.IntPoint(j));
+         // Trans->Weight() returns the determinant of the jaccobians.
+         Temp=u.GetValue(i, ir.IntPoint(j))*Weights[j]*Trans->Weight();
+         Sum+=Temp;
+         SumSquare+=Temp*Temp;
+
+         if(0) {
+            cout << "i, j = " << i << " ," << j << endl;
+            cout << "Trans.Weight() = " << Trans->Weight() << endl;         
+            cout << "Point = " << ir.IntPoint(j).x << " ," << ir.IntPoint(j).y << endl;         
+            cout << "u.GetValue = " << u.GetValue(i, ir.IntPoint(j)) << endl;
+            cout << "Weights[j] = " << Weights[j] << endl;
+         }
+      }
+    }
+    cout << "SumSquare = " << SumSquare << endl;
+    cout << "Sum = " << Sum << endl;
+    
+
+
 cout << "step compute gradient" << endl;
 
+if(0){
    // This section computes the gradient (field).
    // use nedelec basis function.
    ND_FECollection nd_fec(nd_order, dim);
@@ -254,6 +316,19 @@ cout << "step compute gradient" << endl;
      nd_m.RecoverFEMSolution(X, epsdT, D);
      D *= -1.0;
    }
+}
+
+  /* From example 24, gradient can be computed using GradientInterpolator
+     as suggested in https://github.com/mfem/mfem/issues/4118.
+  */
+   ND_FECollection nd_fec(nd_order, dim);
+   FiniteElementSpace nd_fespace(&mesh, &nd_fec);
+   GridFunction D(&nd_fespace);
+   DiscreteLinearOperator dlo(&Afespace, &nd_fespace);
+   dlo.AddDomainInterpolator(new GradientInterpolator());
+   dlo.Assemble();
+   dlo.Mult(u, D);
+
 
    D.Save("GradOfPotGridFile.txt");
 
@@ -269,16 +344,19 @@ cout << "step compute gradient" << endl;
 	      << " keys 'mmcvv'" << flush;
    }
    
-   
-
-   
+   /* the magnetis potential computed above is rotated 90 debree compared to the 
+   magentic field. Copying the dofs from nedelec to raviart thomas fe space.
+   Note the order of RT FE are nd_order-1.
+   Get help from https://github.com/mfem/mfem/issues/4118
+   */
    Vector Data( nd_fespace.GetVSize());
    D.GetTrueDofs(Data);
    RT_FECollection rt_fec(nd_order-1, dim);
    FiniteElementSpace rt_fespace(&mesh, &rt_fec);
+   //Create a GridFunction for rt fe space with the dofa of the nedelec.
    GridFunction ROT90(&rt_fespace, Data);
 
-   //Send the gradient solution by socket to a GLVis server.
+   //Send the msgnetic solution by socket to a GLVis server.
    {
      string title_str = "suoposed magnetic field";
      char vishost[] = "localhost";
