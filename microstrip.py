@@ -14,13 +14,12 @@ gmsh.initialize()
 
 gmsh.model.add("microstrip_py")
 
-th=1.01;		#trace height.
-tw=4.0;		#trace width.
-dh=10;		#dielectric heigh.
-gw=20;		#ground width.
-hspace=20;
+th=1.0;		#trace height.
+tw=1.0;		#trace width.
+dh=19.5;		#dielectric heigh.
+gw=40.0;		#ground width.
+hspace=40.0;
 tms=0.5;	#target mesh size.
-tlgap=0.2;	#the gap around the trace for the int boundary.
 
 #
 # Start by drawing the air points, line, loop, surface and physical.

@@ -30,7 +30,8 @@ using namespace std;
 using namespace mfem;
 
 
-double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u);
+double intfield(double x0, double y0, double x1, double y1, double NbrStep, double *CoeffArray, GridFunction& u);
+double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double Delta, double *CoeffArray, GridFunction& u);
 
 
 int main(int argc, char *argv[])
@@ -40,7 +41,7 @@ int main(int argc, char *argv[])
    const char *mesh_file = "microstrip_py.msh"; //default mesh file.
    int order = 2; // default order for potential elements.
    int irorder = 1; // integration rule order, Default is (basis function order - 1)
-   int nd_order = order; // nedelec element order.
+   int nd_order = 3; // nedelec element order.
    int refineTo = 1; // Default 1 cause no refinement.
    int dgi = 1; // 1 to use default gradient Integrator.
    OptionsParser args(argc, argv);
@@ -131,14 +132,12 @@ int main(int argc, char *argv[])
       Afespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
 
-
   // permeability pcb dielectric 1, copper 1 and air 1.
    double PermCoeffArray[]={0.0, 0.0, 1.0, 1.0, 1.0};
    Vector PermCoeffVector(PermCoeffArray, 5);
    PWConstCoefficient PermCoeff(PermCoeffVector);
    cout << "PermCoeffVector\n";
    PermCoeffVector.Print(cout, 5);
-
 
    // Define the solution vector u as a finite element grid function
    //    corresponding to fespace. Initialize u with initial guess of zero.
@@ -183,29 +182,23 @@ int main(int argc, char *argv[])
    a.FormLinearSystem(ess_tdof_list, u, b, A, X, B);
 
    cout << "A->NumRows(): " << A->NumRows() << endl;
-    cout << "A->NumCols(): " << A->NumCols() << endl;
+   cout << "A->NumCols(): " << A->NumCols() << endl;
 
    // 10. Define a simple symmetric Gauss-Seidel preconditioner and use it to
    //     solve the system AX=B with PCG in the symmetric case, and GMRES in the
    //     non-symmetric one.
-        GSSmoother M((SparseMatrix&)(*A));
-         PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
- cout << "step #12" << endl;
-// 12. Recover the grid function corresponding to U. This is the local finite
-//     element solution.
+   GSSmoother M((SparseMatrix&)(*A));
+   PCG(*A, M, B, X, 1, 2000, 1e-12, 0.0);
+   cout << "step #12" << endl;
+   // 12. Recover the grid function corresponding to U. This is the local finite
+   //     element solution.
    a.RecoverFEMSolution(X, b, u);
 
-//save the gridfuntion class for later use.
-//this is not require, but was done by curiosity.
+   //save the gridfuntion class for later use.
+   //this is not require, but was done by curiosity.
    u.Save("ESGridFile.txt");
 
-//
-// test get gradient.
-//
-
-   
-
-// 14. Save the refined mesh and the solution. This output can be viewed
+   // 14. Save the refined mesh and the solution. This output can be viewed
    //     later using GLVis: "glvis -m refined.mesh -g sol.gf".
    {
       ofstream mesh_ofs("refined.mesh");
@@ -217,70 +210,27 @@ int main(int argc, char *argv[])
    }
 
    // 15. Send the magnetic vector potential solution by socket to a GLVis server.
-      string title_str = "magnetic vector potential Z-axe";
-      char vishost[] = "localhost";
-      int  visport   = 19916;
-      socketstream sol_sock(vishost, visport);
-      sol_sock.precision(8);
-      sol_sock << "solution\n" << mesh << u
-               << "window_title '" << title_str << " Solution'"
-               << " keys 'mmcvvh'" << flush;
+   string title_str = "magnetic vector potential Z-axe";
+   char vishost[] = "localhost";
+   int  visport   = 19916;
+   socketstream sol_sock(vishost, visport);
+   sol_sock.precision(8);
+   sol_sock << "solution\n" << mesh << u
+            << "window_title '" << title_str << " Solution'"
+            << " keys 'mmcvvh'" << flush;
 
 /*compute the line integral along a close path; it should give the magnetomotrice force
   which are amp*turn. test along different paths and along a path enclosing 1/2 of the
   center rectangle. */
 double AmpTurn;
-AmpTurn=intgrad(-3.0, 9.0, 3.0, 12.0, 100, 0.01, PermCoeffArray, u);
+AmpTurn=intgrad(-1.5, 19, 1.5, 21, 100, 0.01, PermCoeffArray, u);
 cout << "expect 1, AmpTurn=" << AmpTurn <<endl;                 
-AmpTurn=intgrad(-4.0, 9.0, 3.0, 12.0, 100, 0.01, PermCoeffArray, u);
+AmpTurn=intgrad(-2.0, 18.0, 2.0, 22.0, 100, 0.01, PermCoeffArray, u);
 cout << "expect 1, AmpTurn=" << AmpTurn <<endl;                 
-AmpTurn=intgrad(-4.0, 9.0, 4.0, 12.0, 100, 0.01, PermCoeffArray, u);
+AmpTurn=intgrad(-4.0, 17.0, 4.0, 23.0, 100, 0.01, PermCoeffArray, u);
 cout << "expect 1, AmpTurn=" << AmpTurn <<endl;                 
-AmpTurn=intgrad(-0.0, 9.0, 3.0, 12.0, 100, 0.01, PermCoeffArray, u);
+AmpTurn=intgrad(0.0, 18, 4.0, 22.0, 100, 0.01, PermCoeffArray, u);
 cout << "expect 0.5, AmpTurn=" << AmpTurn <<endl;    
-
-
-/*
-Compute the integral over the entire domain.
-Resulting in the Sum and The sum of square.
-Get help from ex38 and ex27 line 639.
-https://en.wikipedia.org/wiki/Gaussian_quadrature
-*/
-double Sum=0.0; //the running summation.
-double SumSquare=0.0;
-double Temp;
-Element *El;   //a pointer to the current element.
-IntegrationRule ir;  //integration rule for the current element.
-IntegrationRules irs;
-ElementTransformation *Trans;
-for (int i = 0; i < mesh.GetNE(); i++)
-    {
-      Trans = mesh.GetElementTransformation(i);
-      El = mesh.GetElement(i);
-      ir = irs.Get(El->GetGeometryType(), order+1/2);
-      Array<double> Weights(ir.GetNPoints());
-      Weights = ir.GetWeights();  //quadrature points weights.
-      if (0) cout << "ir.GetNPoints = " << ir.GetNPoints() << endl;
-      for(int j=0; j<ir.GetNPoints(); j++)
-      {
-         Trans->SetIntPoint(&ir.IntPoint(j));
-         // Trans->Weight() returns the determinant of the jaccobians.
-         Temp=u.GetValue(i, ir.IntPoint(j))*Weights[j]*Trans->Weight();
-         Sum+=Temp;
-         SumSquare+=Temp*Temp;
-
-         if(0) {
-            cout << "i, j = " << i << " ," << j << endl;
-            cout << "Trans.Weight() = " << Trans->Weight() << endl;         
-            cout << "Point = " << ir.IntPoint(j).x << " ," << ir.IntPoint(j).y << endl;         
-            cout << "u.GetValue = " << u.GetValue(i, ir.IntPoint(j)) << endl;
-            cout << "Weights[j] = " << Weights[j] << endl;
-         }
-      }
-    }
-    cout << "SumSquare = " << SumSquare << endl;
-    cout << "Sum = " << Sum << endl;
-    
 
 
 cout << "step compute gradient" << endl;
@@ -344,7 +294,7 @@ if(0){
 	      << " keys 'mmcvv'" << flush;
    }
    
-   /* the magnetis potential computed above is rotated 90 debree compared to the 
+   /* the magnetis potential gradient computed above is rotated 90 debree compared to the 
    magentic field. Copying the dofs from nedelec to raviart thomas fe space.
    Note the order of RT FE are nd_order-1.
    Get help from https://github.com/mfem/mfem/issues/4118
@@ -368,6 +318,56 @@ if(0){
 	      << " keys 'mmcvv'" << flush;
    }
 
+
+/*
+Compute the integral over the entire domain.
+Resulting in the Sum and The sum of square.
+Get help from ex38 and ex27 line 639.
+https://en.wikipedia.org/wiki/Gaussian_quadrature
+https://mfem.org/integration/
+DL240228
+*/
+double Sum=0.0; //the running summation.
+double SumSquare=0.0;
+Vector VVal(3);
+Element *El;   //a pointer to the current element.
+IntegrationRule ir;  //integration rule for the current element.
+IntegrationRules irs;
+ElementTransformation *Trans;
+for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      Trans = mesh.GetElementTransformation(i);
+      El = mesh.GetElement(i);
+      ir = irs.Get(El->GetGeometryType(), order+2);
+      if (0) cout << "ir.GetNPoints = " << ir.GetNPoints() << endl;
+      for(int j=0; j<ir.GetNPoints(); j++)
+      {
+         Trans->SetIntPoint(&ir.IntPoint(j));
+         ROT90.GetVectorValue(i, ir.IntPoint(j), VVal);
+         Sum+=sqrt(VVal[0]*VVal[0]+VVal[1]*VVal[1])*ir.IntPoint(j).weight*Trans->Weight();
+         SumSquare+=(VVal[0]*VVal[0]+VVal[1]*VVal[1])*ir.IntPoint(j).weight*Trans->Weight();
+
+         if(0) {
+            cout << "i, j = " << i << " ," << j << endl;
+            cout << "Trans.Weight() = " << Trans->Weight() << endl;         
+            cout << "Point = " << ir.IntPoint(j).x << " ," << ir.IntPoint(j).y << endl;         
+            cout << "Vector Value = " << VVal[0] << ", " << VVal[1] << endl;
+            cout << "ir.IntPoint(j).weight = " << ir.IntPoint(j).weight << endl;
+         }
+      }
+    }
+    cout << "SumSquare = " << SumSquare << endl;
+    cout << "Sum = " << Sum << endl;
+
+double Flux;
+Flux = intfield(0.0, 0.0, 0.0, 20.0, 2000, PermCoeffArray, ROT90);
+cout << "Flux1 = " << Flux << endl;
+Flux = intfield(0.0, 20.0, 0.0, 40.0, 2000, PermCoeffArray, ROT90);
+cout << "Flux2 = " << Flux << endl;
+Flux = intfield(-20.0, 20, 0.0, 20, 2000, PermCoeffArray, ROT90);
+cout << "Flux3 = " << Flux << endl;
+Flux = intfield(0.0, 20, 20, 20, 2000, PermCoeffArray, ROT90);
+cout << "Flux4 = " << Flux << endl;
    if(0)   {
       int Size = Data.Size();
       int vdim = D.VectorDim();
@@ -379,7 +379,7 @@ if(0){
          Data[i]=Data[i+Size/2];
          Data[i+Size/2]=temp;
       }
-      if(1) for(int i=0; i<Size; i+=2) {
+      if(0) for(int i=0; i<Size; i+=2) {
          temp=Data[i];
          Data[i]=-Data[i+1];
          Data[i+1]=temp;
@@ -465,6 +465,130 @@ if(0){
 
 
 
+
+/*
+Function intfield
+
+// This code compute the flux of a field across a boundary.
+// This function is inspired frim intgrad().
+
+compute the lenght of the line.
+divide by the step to get the sample lenght.
+in a while loop based on lenght.
+check if there is one or more samples.
+then find the middle of the sample.
+get the grad and multiply by sample lenghtand and coeff and sum.
+*/
+
+double intfield(double x0, double y0, double x1, double y1, double NbrStep, double *CoeffArray, GridFunction& u)
+{
+   assert(x0==x1 || y0==y1);
+   assert(x1>=x0 || y1>=y0);
+   double TotalLenght=sqrt(pow((x1-x0), 2)+pow((y1-y0), 2));
+   double SampleLenght=TotalLenght/NbrStep;
+   double pos, RunningLenght=0.0, x, y;
+   double CurrentSampleLenght;
+   double Flux=0.0, val;
+   int j=0;
+   int NbrPoints=1;
+   Vector XYPoints(3*NbrPoints); //x, y.
+   Vector VVal(3);
+   int state;
+   enum STATE {ON_X_AXE, ON_Y_AXE, DONE};
+   if (x0==x1) { state = ON_Y_AXE; pos=y0;}
+   else{state = ON_X_AXE; pos=x0;}
+   x=x0;
+   y=y0;
+
+   while(RunningLenght<TotalLenght)
+   {
+      switch(state)
+      {
+         case ON_X_AXE:  // from (x0, y0) to the right.
+            if(pos+SampleLenght<=x1)
+            {
+               x=pos+SampleLenght/2.0;
+               pos+=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+            }
+            else
+            {
+               x=pos+(x1-pos)/2;
+               CurrentSampleLenght=x1-pos;
+               state=DONE;
+            }
+            XYPoints[0]=x;
+            XYPoints[1]=y; 
+
+            break;
+
+         case ON_Y_AXE:  // from (x0, y0) to the up.
+            if(pos+SampleLenght<=y1)
+            {
+               y=pos+SampleLenght/2.0;
+               pos+=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+            }
+            else
+            {
+               y=pos+(y1-pos)/2.0;
+               CurrentSampleLenght=y1-pos;
+               state=DONE;
+            }
+            XYPoints[0]=x;
+            XYPoints[1]=y;
+
+            break;
+            
+         case DONE:  //from (x1, y1) to the left.
+            assert(1);
+      }
+      RunningLenght+=CurrentSampleLenght;
+      
+      //Transfert the points in the matrix.
+      DenseMatrix point_mat(XYPoints.GetData(), 2, 1);
+      if(0) point_mat.Print(cout);
+
+      Array<int> elem_ids(NbrPoints); // el ement ids.
+      Array<IntegrationPoint> ips(NbrPoints);  // the location within the element.
+
+      Mesh * m = u.FESpace()->GetMesh();
+      assert(m->FindPoints(point_mat, elem_ids, ips)==1); // find the element and the point in the element.
+      double val[NbrPoints];
+
+      int attr;
+      attr=m->GetAttribute(elem_ids[0]);
+
+
+
+      // get the value of each point one by one.
+
+      u.GetVectorValue(elem_ids[0], ips[0], VVal);
+   
+
+      if(0)
+      {
+         cout << j++  << ", "  << RunningLenght << ", "
+              <<  CurrentSampleLenght << ", " << XYPoints[0] << ", "
+              << XYPoints[1] << ", " << VVal[0] << ", " << VVal[1] << ", " << VVal[2] << endl;
+      }
+
+      if(0)
+      {
+         cout << j++  << ", "  << XYPoints[1]
+               << ", " << val[0] << ", " << attr << ", " << CoeffArray[attr] << endl;
+      }
+
+      // attr[0]-1, -1 is necessary to align dielectric coefficients;
+      // but I do not fully understand why; i think it start to 1 instead of 0.
+
+      if(ON_X_AXE) val[0] = VVal[1];
+      else val[0] = VVal[0];
+
+      Flux+=CoeffArray[attr-1]*CurrentSampleLenght*val[0]; 
+   }
+   return Flux;
+}
 
 /*
 Function intgrad
