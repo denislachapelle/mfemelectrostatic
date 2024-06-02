@@ -14,7 +14,7 @@ gmsh.initialize()
 
 gmsh.model.add("roundwire_py")
 
-dia=1.0;		#wire diameter.
+dia=0.05;		#wire diameter.
 tms=0.5;	    #target mesh size.
 
 

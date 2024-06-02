@@ -11,7 +11,7 @@ MFEM_BUILD_DIR ?= /mnt/c/mfem-4.6
 
 #COMMON_LIB = -L$(MFEM_BUILD_DIR)/miniapps/common -lmfem-common
 
-all: electrostatic magnetostatic magnetostatic2d skineffect2d
+all: electrostatic magnetostatic magnetostatic2d skineffect2d proximity3d
 
 electrostatic: electrostatic.cpp
 	g++ -g -o electrostatic  -std=c++11 -I$(MFEM_DIR) electrostatic.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lrt
@@ -25,4 +25,7 @@ magnetostatic2d: magnetostatic2d.cpp
 
 skineffect2d: skineffect2d.cpp
 	g++ -g -o skineffect2d  -std=c++11 -I$(MFEM_DIR) skineffect2d.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lrt
+
+proximity3d: proximity3d.cpp
+	g++ -g -o proximity3d  -std=c++11 -I$(MFEM_DIR) proximity3d.cpp  -L$(MFEM_BUILD_DIR) -lmfem -L$(MFEM_BUILD_DIR)/miniapps/common -lrt
 

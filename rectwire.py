@@ -18,7 +18,7 @@ dia=1.0;		#wire diameter.
 tms=0.5;	    #target mesh size.
 
 
-gmsh.model.occ.addRectangle(0,0,0,3, 1, 1, 0.1)
+gmsh.model.occ.addRectangle(0,0,0,0.5, 0.1, 1, 0.01)
 #gmsh.model.occ.addCurveLoop([1], 1)
 
 #gmsh.model.occ.addPlaneSurface([1], 1)

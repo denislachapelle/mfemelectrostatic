@@ -1,80 +1,57 @@
-//                                skineffect2d
-//                                based on MFEM Example 22 prob 1 (case 0)
+//                                proximity effect
+//                                inspired from MFEM Example 22
+//                                prob 2, case 1.
 //
-// Compile with: make skineffect2d
+// this version is stripped down; go back to _saved once debugged.
 //
-// Sample runs:  ex22 -m ../data/inline-segment.mesh -o 3
-//               ex22 -m ../data/inline-tri.mesh -o 3
-//               ex22 -m ../data/inline-quad.mesh -o 3
-//               ex22 -m ../data/inline-quad.mesh -o 3 -p 1
-//               ex22 -m ../data/inline-quad.mesh -o 3 -p 1 -pa
-//               ex22 -m ../data/inline-quad.mesh -o 3 -p 2
-//               ex22 -m ../data/inline-tet.mesh -o 2
-//               ex22 -m ../data/inline-hex.mesh -o 2
-//               ex22 -m ../data/inline-hex.mesh -o 2 -p 1
-//               ex22 -m ../data/inline-hex.mesh -o 2 -p 2
-//               ex22 -m ../data/inline-hex.mesh -o 2 -p 2 -pa
-//               ex22 -m ../data/inline-wedge.mesh -o 1
-//               ex22 -m ../data/inline-pyramid.mesh -o 1
-//               ex22 -m ../data/star.mesh -r 1 -o 2 -sigma 10.0
+// Compile with: make proximity3d
 //
-// Device sample runs:
-//               ex22 -m ../data/inline-quad.mesh -o 3 -p 1 -pa -d cuda
-//               ex22 -m ../data/inline-hex.mesh -o 2 -p 2 -pa -d cuda
-//               ex22 -m ../data/star.mesh -r 1 -o 2 -sigma 10.0 -pa -d cuda
+// Sample runs:  proximity3d
 //
 // Description:  This example code demonstrates the use of MFEM to define and
-//               solve simple complex-valued linear systems. It implements three
-//               variants of a damped harmonic oscillator:
-//
-//               1) A scalar H1 field
-//                  -Div(a Grad u) - omega^2 b u + i omega c u = 0
+//               solve simple complex-valued linear systems. 
 //
 //               2) A vector H(Curl) field
 //                  Curl(a Curl u) - omega^2 b u + i omega c u = 0
 //
-//               3) A vector H(Div) field
-//                  -Grad(a Div u) - omega^2 b u + i omega c u = 0
-//
-//               In each case the field is driven by a forced oscillation, with
-//               angular frequency omega, imposed at the boundary or a portion
-//               of the boundary.
-//
-//               In electromagnetics, the coefficients are typically named the
-//               permeability, mu = 1/a, permittivity, epsilon = b, and
-//               conductivity, sigma = c. The user can specify these constants
-//               using either set of names.
-//
-//               The example also demonstrates how to display a time-varying
-//               solution as a sequence of fields sent to a single GLVis socket.
-//
-//               We recommend viewing examples 1, 3 and 4 before viewing this
-//               example.
 
 #include "mfem.hpp"
+
 #include <fstream>
 #include <iostream>
+
+#define airsurfaround 10
+#define airsurffront 4
+#define airsurfback 5
+#define conductorrightsurffront 8
+#define conductorleftsurffront 6
+#define air 1
+#define conductorright 2
+#define conductorleft 3
+#define conductorrightsurfback 9
+#define conductorleftsurfback 7
 
 using namespace std;
 using namespace mfem;
 
-static double mu_ = 1.257e-6;
-static double epsilon_ = 8.854E-12;
-static double sigma_ = 1.0/16.78e-9;
+static double mu_ = 1.25663706212E-6;
+static double epsilon_ = 8.8541878188E-12;
+static double sigma_ = 60E6;
 static double omega_ = 2.0*M_PI*60;
+
+static double mu0_ = 1.25663706212E-6;
+static double epsilon0_ = 8.8541878188E-12;
 
 int main(int argc, char *argv[])
 {
    // 1. Parse command-line options.
-   const char *mesh_file = "roundwire.msh";
+   const char *mesh_file = "ProxRoundWires3d.msh";
    int ref_levels = 0;
    int order = 1;
-   int prob = 0;
    double freq = -1.0;
    double a_coef = 0.0;
    bool visualization = 1;
    bool herm_conv = true;
-   bool pa = false;
    const char *device_config = "cpu";
 
    OptionsParser args(argc, argv);
@@ -84,6 +61,12 @@ int main(int argc, char *argv[])
                   "Number of times to refine the mesh uniformly.");
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
+   args.AddOption(&a_coef, "-a", "--stiffness-coef",
+                  "Stiffness coefficient (spring constant or 1/mu).");
+   args.AddOption(&epsilon_, "-b", "--mass-coef",
+                  "Mass coefficient (or epsilon).");
+   args.AddOption(&sigma_, "-c", "--damping-coef",
+                  "Damping coefficient (or sigma).");
    args.AddOption(&mu_, "-mu", "--permeability",
                   "Permeability of free space (or 1/(spring constant)).");
    args.AddOption(&epsilon_, "-eps", "--permittivity",
@@ -97,8 +80,6 @@ int main(int argc, char *argv[])
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
-   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
-                  "--no-partial-assembly", "Enable Partial Assembly.");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
    args.Parse();
@@ -136,92 +117,131 @@ int main(int argc, char *argv[])
       mesh->UniformRefinement();
    }
 
+   cout << "mesh->Dimension() = "<< mesh->Dimension() << endl;
+   cout << "mesh->GetNE() = "<< mesh->GetNE() << endl;
+   cout << "mesh->GetNBE() = "<< mesh->GetNBE() << endl;
+   cout << "mesh->GetNEdges() = "<< mesh->GetNEdges() << endl;
+   cout << "mesh->GetNFaces() = "<< mesh->GetNFaces() << endl;
+   cout << "mesh->bdr_attributes.Max() = "<< mesh->bdr_attributes.Max() << endl;
+   
+   
    FiniteElementCollection *fec = NULL;
-   fec = new H1_FECollection(order, dim);
+   fec = new ND_FECollection(order, dim); //Curl(curl()) integrator only with nedelec.
    FiniteElementSpace *fespace = new FiniteElementSpace(mesh, fec);
    cout << "Number of finite element unknowns: " << fespace->GetTrueVSize()
         << endl;
 
-   // 6. Determine the list of true (i.e. conforming) essential boundary dofs.
-   //    In this example, the boundary conditions are defined based on the type
-   //    of mesh and the problem type.
-   Array<int> ess_tdof_list;
-   Array<int> ess_bdr;
+
+   // 8. Define the solution vector u as a complex finite element grid function
+   //    corresponding to fespace.
+   ComplexGridFunction u(fespace);
+   u=0.0;
+ 
+   Vector zeroVec(dim); zeroVec = 0.0; VectorConstantCoefficient zeroVecCoef(zeroVec);
+   
+// 6a. Determine the list essential boundaries and 
+// of conductors boundaries.
+// clb: conductor left back, f: front, r: right.
+   cout << "mesh->bdr_attributes.Size() = " << mesh->bdr_attributes.Size() << endl;
+   cout << "mesh->bdr_attributes.Max() = " << mesh->bdr_attributes.Max() << endl;
+   Array<int> ess_tdof_list, ess_bdr;  //essential.
+   Array<int> clb_brd_list, clb_bdr;   //conductor left back.
+   Array<int> crb_brd_list, crb_bdr;   //conductor right back.
+   Array<int> clf_brd_list, clf_bdr;   //conductor left front.
+   Array<int> crf_brd_list, crf_bdr;   //conductor right front.
    if (mesh->bdr_attributes.Size())
    {
       ess_bdr.SetSize(mesh->bdr_attributes.Max());
-      ess_bdr = 1;
+      clb_bdr.SetSize(mesh->bdr_attributes.Max());
+      crb_bdr.SetSize(mesh->bdr_attributes.Max());
+      clf_bdr.SetSize(mesh->bdr_attributes.Max());
+      crf_bdr.SetSize(mesh->bdr_attributes.Max());
+      assert(clb_bdr.Size() == 10);
+      ess_bdr = 0;
+      ess_bdr[airsurffront-1] = 1;
+      ess_bdr[airsurfback-1] = 1;
+      ess_bdr[airsurfaround-1] = 1;
+      clb_bdr = 0;
+      clb_bdr[conductorleftsurfback-1] = 1;
+      crb_bdr = 0;
+      crb_bdr[conductorrightsurfback-1] = 1;
+      clf_bdr = 0;
+      clf_bdr[conductorleftsurffront-1] = 1;
+      crf_bdr = 0;
+      crf_bdr[conductorrightsurffront-1] = 1;
+
       fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
    }
 
-   // 7. Set up the linear form b(.) which corresponds to the right-hand side of
+   //dl240529 
+   u.ProjectBdrCoefficientTangent(zeroVecCoef, zeroVecCoef, ess_bdr);
+
+   // 7. Set up the complex linear form b(.) which corresponds to the right-hand side of
    //    the FEM linear system.
    ComplexLinearForm b(fespace, conv);
    b.Vector::operator=(0.0);
 
-   // 8. Define the solution vector u as a complex finite element grid function
-   //    corresponding to fespace. Initialize u with initial guess of 1+0i or
-   //    the exact solution if it is known.
-   ComplexGridFunction u(fespace);
+   //Coefp and Coefn to set the neumann boundary condition on the conductors faces.
+   //This is in fact the current density that is set uniform on the conductors faces.
+   //Since we are in hamonic regime, this is like an AC current source.
+   Vector vp(3); vp[0]=0.0; vp[1]=1.0;vp[2]=0.0; VectorConstantCoefficient Coefp(vp);
+   Vector vn(3); vn[0]=0.0; vn[1]=-1.0;vn[2]=0.0; VectorConstantCoefficient Coefn(vn);
+   if(0) { Coefp.GetVec().Print();}
+   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefp),
+                           new VectorFEBoundaryTangentLFIntegrator(Coefp),
+                           clb_bdr);  //conductor left back.
+   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefn),
+                           new VectorFEBoundaryTangentLFIntegrator(Coefn),
+                           clf_bdr);  //conductor left front
+   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefp),
+                           new VectorFEBoundaryTangentLFIntegrator(Coefp),
+                           crb_bdr);   //conductor right back.
+   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefn),
+                           new VectorFEBoundaryTangentLFIntegrator(Coefn),
+                           crf_bdr);   //conductor right front.
  
-   ConstantCoefficient zeroCoef(0.0);
-   ConstantCoefficient oneCoef(1.0);
+   b.Assemble();
 
-   Vector zeroVec(dim); zeroVec = 0.0;
-   Vector  oneVec(dim);  oneVec = 0.0; oneVec[0] = 1.0;
-   VectorConstantCoefficient zeroVecCoef(zeroVec);
-   VectorConstantCoefficient oneVecCoef(oneVec);
-
-
-   u.ProjectBdrCoefficient(oneCoef, zeroCoef, ess_bdr);
-         
    // 9. Set up the sesquilinear form a(.,.) on the finite element space
-   //    corresponding to the damped harmonic oscillator operator of the
-   //    appropriate type:
-   //
-   //    0) A scalar H1 field
-   //       -Div(a Grad) - omega^2 b + i omega c
-   //
+   //    
    //    1) A vector H(Curl) field
    //       Curl(a Curl) - omega^2 b + i omega c
    //
-   //    2) A vector H(Div) field
-   //       -Grad(a Div) - omega^2 b + i omega c
-   //
-   ConstantCoefficient a_(-1.0);
-   ConstantCoefficient b_(-omega_ * omega_ * epsilon_ * mu_);
-   ConstantCoefficient c_(omega_ * mu_ * sigma_);
-   ConstantCoefficient negc_(omega_ * omega_ * epsilon_* mu_);
-
-   SesquilinearForm *a = new SesquilinearForm(fespace, conv);
-   if (pa) { a->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
    
-         a->AddDomainIntegrator(new DiffusionIntegrator(a_),
+   ConstantCoefficient a_Coef(1.0);
+   // b and c coefficient are dependant on the element attributes.
+   int NbrAttr = mesh->attributes.Size();
+   assert(NbrAttr == 3);
+   Vector b_Vector(NbrAttr);
+   b_Vector[conductorright-1] = -omega_ * omega_ * mu_ * epsilon_;  //copper.
+   b_Vector[conductorleft-1] = -omega_ * omega_ * mu_ * epsilon_;  //copper.
+   b_Vector[air-1] = -omega_ * omega_ * mu0_ * epsilon0_;  //air.
+   PWConstCoefficient b_Coef(b_Vector);
+   if(0) { b_Vector.Print();}
+   
+   Vector c_Vector(NbrAttr);
+   c_Vector[conductorright-1] = omega_ * mu_ * sigma_;   //copper.
+   c_Vector[conductorleft-1] = omega_ * mu_ * sigma_;   //copper.
+   c_Vector[air-1] = omega_ * mu0_ * 0.0;      //air.
+   PWConstCoefficient c_Coef(c_Vector);
+   if(0) { c_Vector.Print();}
+   
+   SesquilinearForm *a = new SesquilinearForm(fespace, conv);
+         a->AddDomainIntegrator(new CurlCurlIntegrator(a_Coef),
                                 NULL);
-         a->AddDomainIntegrator(new MassIntegrator(b_),
-                                new MassIntegrator(c_));
-         
+         a->AddDomainIntegrator(new VectorFEMassIntegrator(b_Coef),
+                                new VectorFEMassIntegrator(c_Coef));
 
    // 9a. Set up the bilinear form for the preconditioner corresponding to the
    //     appropriate operator
    //
-   //      0) A scalar H1 field
-   //         -Div(a Grad) - omega^2 b + omega c
-   //
    //      1) A vector H(Curl) field
    //         Curl(a Curl) + omega^2 b + omega c
    //
-   //      2) A vector H(Div) field
-   //         -Grad(a Div) - omega^2 b + omega c
-   //
    BilinearForm *pcOp = new BilinearForm(fespace);
-   if (pa) { pcOp->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
-
-   
-         pcOp->AddDomainIntegrator(new DiffusionIntegrator(a_));
-         pcOp->AddDomainIntegrator(new MassIntegrator(b_));
-         pcOp->AddDomainIntegrator(new MassIntegrator(c_));
-         
+         pcOp->AddDomainIntegrator(new CurlCurlIntegrator(a_Coef));
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(b_Coef));
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(c_Coef));
 
    // 10. Assemble the form and the corresponding linear system, applying any
    //     necessary transformations such as: assembly, eliminating boundary
@@ -250,20 +270,13 @@ int main(int argc, char *argv[])
 
       Operator * pc_r = NULL;
       Operator * pc_i = NULL;
-
-      if (pa)
-      {
-         pc_r = new OperatorJacobiSmoother(*pcOp, ess_tdof_list);
-      }
-      else
-      {
-         OperatorHandle PCOp;
-         pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
-         pcOp->FormSystemMatrix(ess_tdof_list, PCOp);
-         pc_r = new DSmoother(*PCOp.As<SparseMatrix>());
-               
-      }
-      double s = (prob != 1) ? 1.0 : -1.0;
+      
+      OperatorHandle PCOp;
+      pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
+      pcOp->FormSystemMatrix(ess_tdof_list, PCOp);
+      pc_r = new GSSmoother(*PCOp.As<SparseMatrix>());
+      
+      double s = -1.0;
       pc_i = new ScaledOperator(pc_r,
                                 (conv == ComplexOperator::HERMITIAN) ?
                                 s:-s);
@@ -285,7 +298,6 @@ int main(int argc, char *argv[])
    //     errors if the exact solution is known.
    a->RecoverFEMSolution(U, b, u);
 
-   
 
    // 13. Save the refined mesh and the solution. This output can be viewed
    //     later using GLVis: "glvis -m mesh -g sol".
@@ -316,8 +328,6 @@ int main(int argc, char *argv[])
       sol_sock_i << "solution\n" << *mesh << u.imag()
                  << "window_title 'Solution: Imaginary Part'" << flush;
    }
-   
-  
 
    // 15. Free the used memory.
    delete a;
@@ -329,53 +339,3 @@ int main(int argc, char *argv[])
    return 0;
 }
 
-bool check_for_inline_mesh(const char * mesh_file)
-{
-   string file(mesh_file);
-   size_t p0 = file.find_last_of("/");
-   string s0 = file.substr((p0==string::npos)?0:(p0+1),7);
-   return s0 == "inline-";
-}
-
-complex<double> u0_exact(const Vector &x)
-{
-   int dim = x.Size();
-   complex<double> i(0.0, 1.0);
-   complex<double> alpha = (epsilon_ * omega_ - i * sigma_);
-   complex<double> kappa = std::sqrt(mu_ * omega_* alpha);
-   return std::exp(-i * kappa * x[dim - 1]);
-}
-
-double u0_real_exact(const Vector &x)
-{
-   return u0_exact(x).real();
-}
-
-double u0_imag_exact(const Vector &x)
-{
-   return u0_exact(x).imag();
-}
-
-void u1_real_exact(const Vector &x, Vector &v)
-{
-   int dim = x.Size();
-   v.SetSize(dim); v = 0.0; v[0] = u0_real_exact(x);
-}
-
-void u1_imag_exact(const Vector &x, Vector &v)
-{
-   int dim = x.Size();
-   v.SetSize(dim); v = 0.0; v[0] = u0_imag_exact(x);
-}
-
-void u2_real_exact(const Vector &x, Vector &v)
-{
-   int dim = x.Size();
-   v.SetSize(dim); v = 0.0; v[dim-1] = u0_real_exact(x);
-}
-
-void u2_imag_exact(const Vector &x, Vector &v)
-{
-   int dim = x.Size();
-   v.SetSize(dim); v = 0.0; v[dim-1] = u0_imag_exact(x);
-}

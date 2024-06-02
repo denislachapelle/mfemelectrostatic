@@ -1,7 +1,6 @@
-//                                skineffect2d
-//                                based on MFEM Example 22 prob 1 (case 0)
+//                                MFEM Example 22
 //
-// Compile with: make skineffect2d
+// Compile with: make ex22
 //
 // Sample runs:  ex22 -m ../data/inline-segment.mesh -o 3
 //               ex22 -m ../data/inline-tri.mesh -o 3
@@ -58,15 +57,26 @@
 using namespace std;
 using namespace mfem;
 
-static double mu_ = 1.257e-6;
-static double epsilon_ = 8.854E-12;
-static double sigma_ = 1.0/16.78e-9;
-static double omega_ = 2.0*M_PI*60;
+static double mu_ = 1.0;
+static double epsilon_ = 1.0;
+static double sigma_ = 20.0;
+static double omega_ = 10.0;
+
+double u0_real_exact(const Vector &);
+double u0_imag_exact(const Vector &);
+
+void u1_real_exact(const Vector &, Vector &);
+void u1_imag_exact(const Vector &, Vector &);
+
+void u2_real_exact(const Vector &, Vector &);
+void u2_imag_exact(const Vector &, Vector &);
+
+bool check_for_inline_mesh(const char * mesh_file);
 
 int main(int argc, char *argv[])
 {
    // 1. Parse command-line options.
-   const char *mesh_file = "roundwire.msh";
+   const char *mesh_file = "../data/inline-quad.mesh";
    int ref_levels = 0;
    int order = 1;
    int prob = 0;
@@ -74,6 +84,7 @@ int main(int argc, char *argv[])
    double a_coef = 0.0;
    bool visualization = 1;
    bool herm_conv = true;
+   bool exact_sol = true;
    bool pa = false;
    const char *device_config = "cpu";
 
@@ -84,6 +95,15 @@ int main(int argc, char *argv[])
                   "Number of times to refine the mesh uniformly.");
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
+   args.AddOption(&prob, "-p", "--problem-type",
+                  "Choose between 0: H_1, 1: H(Curl), or 2: H(Div) "
+                  "damped harmonic oscillator.");
+   args.AddOption(&a_coef, "-a", "--stiffness-coef",
+                  "Stiffness coefficient (spring constant or 1/mu).");
+   args.AddOption(&epsilon_, "-b", "--mass-coef",
+                  "Mass coefficient (or epsilon).");
+   args.AddOption(&sigma_, "-c", "--damping-coef",
+                  "Damping coefficient (or sigma).");
    args.AddOption(&mu_, "-mu", "--permeability",
                   "Permeability of free space (or 1/(spring constant)).");
    args.AddOption(&epsilon_, "-eps", "--permittivity",
@@ -109,9 +129,22 @@ int main(int argc, char *argv[])
    }
    args.PrintOptions(cout);
 
+   MFEM_VERIFY(prob >= 0 && prob <=2,
+               "Unrecognized problem type: " << prob);
+
+   if ( a_coef != 0.0 )
+   {
+      mu_ = 1.0 / a_coef;
+   }
    if ( freq > 0.0 )
    {
       omega_ = 2.0 * M_PI * freq;
+   }
+
+   exact_sol = check_for_inline_mesh(mesh_file);
+   if (exact_sol)
+   {
+      cout << "Identified a mesh with known exact solution" << endl;
    }
 
    ComplexOperator::Convention conv =
@@ -136,8 +169,24 @@ int main(int argc, char *argv[])
       mesh->UniformRefinement();
    }
 
+   // 5. Define a finite element space on the mesh. Here we use continuous
+   //    Lagrange, Nedelec, or Raviart-Thomas finite elements of the specified
+   //    order.
+   if (dim == 1 && prob != 0 )
+   {
+      cout << "Switching to problem type 0, H1 basis functions, "
+           << "for 1 dimensional mesh." << endl;
+      prob = 0;
+   }
+
    FiniteElementCollection *fec = NULL;
-   fec = new H1_FECollection(order, dim);
+   switch (prob)
+   {
+      case 0:  fec = new H1_FECollection(order, dim);      break;
+      case 1:  fec = new ND_FECollection(order, dim);      break;
+      case 2:  fec = new RT_FECollection(order - 1, dim);  break;
+      default: break; // This should be unreachable
+   }
    FiniteElementSpace *fespace = new FiniteElementSpace(mesh, fec);
    cout << "Number of finite element unknowns: " << fespace->GetTrueVSize()
         << endl;
@@ -163,18 +212,76 @@ int main(int argc, char *argv[])
    //    corresponding to fespace. Initialize u with initial guess of 1+0i or
    //    the exact solution if it is known.
    ComplexGridFunction u(fespace);
- 
+   ComplexGridFunction * u_exact = NULL;
+   if (exact_sol) { u_exact = new ComplexGridFunction(fespace); }
+
+   FunctionCoefficient u0_r(u0_real_exact);
+   FunctionCoefficient u0_i(u0_imag_exact);
+   VectorFunctionCoefficient u1_r(dim, u1_real_exact);
+   VectorFunctionCoefficient u1_i(dim, u1_imag_exact);
+   VectorFunctionCoefficient u2_r(dim, u2_real_exact);
+   VectorFunctionCoefficient u2_i(dim, u2_imag_exact);
+
    ConstantCoefficient zeroCoef(0.0);
    ConstantCoefficient oneCoef(1.0);
 
    Vector zeroVec(dim); zeroVec = 0.0;
-   Vector  oneVec(dim);  oneVec = 0.0; oneVec[0] = 1.0;
+   Vector  oneVec(dim);  oneVec = 0.0; oneVec[(prob==2)?(dim-1):0] = 1.0;
    VectorConstantCoefficient zeroVecCoef(zeroVec);
    VectorConstantCoefficient oneVecCoef(oneVec);
 
+   switch (prob)
+   {
+      case 0:
+         if (exact_sol)
+         {
+            u.ProjectBdrCoefficient(u0_r, u0_i, ess_bdr);
+            u_exact->ProjectCoefficient(u0_r, u0_i);
+         }
+         else
+         {
+            u.ProjectBdrCoefficient(oneCoef, zeroCoef, ess_bdr);
+         }
+         break;
+      case 1:
+         if (exact_sol)
+         {
+            u.ProjectBdrCoefficientTangent(u1_r, u1_i, ess_bdr);
+            u_exact->ProjectCoefficient(u1_r, u1_i);
+         }
+         else
+         {
+            u.ProjectBdrCoefficientTangent(oneVecCoef, zeroVecCoef, ess_bdr);
+         }
+         break;
+      case 2:
+         if (exact_sol)
+         {
+            u.ProjectBdrCoefficientNormal(u2_r, u2_i, ess_bdr);
+            u_exact->ProjectCoefficient(u2_r, u2_i);
+         }
+         else
+         {
+            u.ProjectBdrCoefficientNormal(oneVecCoef, zeroVecCoef, ess_bdr);
+         }
+         break;
+      default: break; // This should be unreachable
+   }
 
-   u.ProjectBdrCoefficient(oneCoef, zeroCoef, ess_bdr);
-         
+   if (visualization && exact_sol)
+   {
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      socketstream sol_sock_r(vishost, visport);
+      socketstream sol_sock_i(vishost, visport);
+      sol_sock_r.precision(8);
+      sol_sock_i.precision(8);
+      sol_sock_r << "solution\n" << *mesh << u_exact->real()
+                 << "window_title 'Exact: Real Part'" << flush;
+      sol_sock_i << "solution\n" << *mesh << u_exact->imag()
+                 << "window_title 'Exact: Imaginary Part'" << flush;
+   }
+
    // 9. Set up the sesquilinear form a(.,.) on the finite element space
    //    corresponding to the damped harmonic oscillator operator of the
    //    appropriate type:
@@ -188,19 +295,35 @@ int main(int argc, char *argv[])
    //    2) A vector H(Div) field
    //       -Grad(a Div) - omega^2 b + i omega c
    //
-   ConstantCoefficient a_(-1.0);
-   ConstantCoefficient b_(-omega_ * omega_ * epsilon_ * mu_);
-   ConstantCoefficient c_(omega_ * mu_ * sigma_);
-   ConstantCoefficient negc_(omega_ * omega_ * epsilon_* mu_);
+   ConstantCoefficient stiffnessCoef(1.0/mu_);
+   ConstantCoefficient massCoef(-omega_ * omega_ * epsilon_);
+   ConstantCoefficient lossCoef(omega_ * sigma_);
+   ConstantCoefficient negMassCoef(omega_ * omega_ * epsilon_);
 
    SesquilinearForm *a = new SesquilinearForm(fespace, conv);
    if (pa) { a->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
-   
-         a->AddDomainIntegrator(new DiffusionIntegrator(a_),
+   switch (prob)
+   {
+      case 0:
+         a->AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef),
                                 NULL);
-         a->AddDomainIntegrator(new MassIntegrator(b_),
-                                new MassIntegrator(c_));
-         
+         a->AddDomainIntegrator(new MassIntegrator(massCoef),
+                                new MassIntegrator(lossCoef));
+         break;
+      case 1:
+         a->AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef),
+                                NULL);
+         a->AddDomainIntegrator(new VectorFEMassIntegrator(massCoef),
+                                new VectorFEMassIntegrator(lossCoef));
+         break;
+      case 2:
+         a->AddDomainIntegrator(new DivDivIntegrator(stiffnessCoef),
+                                NULL);
+         a->AddDomainIntegrator(new VectorFEMassIntegrator(massCoef),
+                                new VectorFEMassIntegrator(lossCoef));
+         break;
+      default: break; // This should be unreachable
+   }
 
    // 9a. Set up the bilinear form for the preconditioner corresponding to the
    //     appropriate operator
@@ -217,11 +340,25 @@ int main(int argc, char *argv[])
    BilinearForm *pcOp = new BilinearForm(fespace);
    if (pa) { pcOp->SetAssemblyLevel(AssemblyLevel::PARTIAL); }
 
-   
-         pcOp->AddDomainIntegrator(new DiffusionIntegrator(a_));
-         pcOp->AddDomainIntegrator(new MassIntegrator(b_));
-         pcOp->AddDomainIntegrator(new MassIntegrator(c_));
-         
+   switch (prob)
+   {
+      case 0:
+         pcOp->AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef));
+         pcOp->AddDomainIntegrator(new MassIntegrator(massCoef));
+         pcOp->AddDomainIntegrator(new MassIntegrator(lossCoef));
+         break;
+      case 1:
+         pcOp->AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef));
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(negMassCoef));
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(lossCoef));
+         break;
+      case 2:
+         pcOp->AddDomainIntegrator(new DivDivIntegrator(stiffnessCoef));
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(massCoef));
+         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(lossCoef));
+         break;
+      default: break; // This should be unreachable
+   }
 
    // 10. Assemble the form and the corresponding linear system, applying any
    //     necessary transformations such as: assembly, eliminating boundary
@@ -260,8 +397,20 @@ int main(int argc, char *argv[])
          OperatorHandle PCOp;
          pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
          pcOp->FormSystemMatrix(ess_tdof_list, PCOp);
-         pc_r = new DSmoother(*PCOp.As<SparseMatrix>());
-               
+         switch (prob)
+         {
+            case 0:
+               pc_r = new DSmoother(*PCOp.As<SparseMatrix>());
+               break;
+            case 1:
+               pc_r = new GSSmoother(*PCOp.As<SparseMatrix>());
+               break;
+            case 2:
+               pc_r = new DSmoother(*PCOp.As<SparseMatrix>());
+               break;
+            default:
+               break; // This should be unreachable
+         }
       }
       double s = (prob != 1) ? 1.0 : -1.0;
       pc_i = new ScaledOperator(pc_r,
@@ -285,7 +434,33 @@ int main(int argc, char *argv[])
    //     errors if the exact solution is known.
    a->RecoverFEMSolution(U, b, u);
 
-   
+   if (exact_sol)
+   {
+      double err_r = -1.0;
+      double err_i = -1.0;
+
+      switch (prob)
+      {
+         case 0:
+            err_r = u.real().ComputeL2Error(u0_r);
+            err_i = u.imag().ComputeL2Error(u0_i);
+            break;
+         case 1:
+            err_r = u.real().ComputeL2Error(u1_r);
+            err_i = u.imag().ComputeL2Error(u1_i);
+            break;
+         case 2:
+            err_r = u.real().ComputeL2Error(u2_r);
+            err_i = u.imag().ComputeL2Error(u2_i);
+            break;
+         default: break; // This should be unreachable
+      }
+
+      cout << endl;
+      cout << "|| Re (u_h - u) ||_{L^2} = " << err_r << endl;
+      cout << "|| Im (u_h - u) ||_{L^2} = " << err_i << endl;
+      cout << endl;
+   }
 
    // 13. Save the refined mesh and the solution. This output can be viewed
    //     later using GLVis: "glvis -m mesh -g sol".
@@ -316,11 +491,54 @@ int main(int argc, char *argv[])
       sol_sock_i << "solution\n" << *mesh << u.imag()
                  << "window_title 'Solution: Imaginary Part'" << flush;
    }
-   
-  
+   if (visualization && exact_sol)
+   {
+      *u_exact -= u;
+
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      socketstream sol_sock_r(vishost, visport);
+      socketstream sol_sock_i(vishost, visport);
+      sol_sock_r.precision(8);
+      sol_sock_i.precision(8);
+      sol_sock_r << "solution\n" << *mesh << u_exact->real()
+                 << "window_title 'Error: Real Part'" << flush;
+      sol_sock_i << "solution\n" << *mesh << u_exact->imag()
+                 << "window_title 'Error: Imaginary Part'" << flush;
+   }
+   if (visualization)
+   {
+      GridFunction u_t(fespace);
+      u_t = u.real();
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      socketstream sol_sock(vishost, visport);
+      sol_sock.precision(8);
+      sol_sock << "solution\n" << *mesh << u_t
+               << "window_title 'Harmonic Solution (t = 0.0 T)'"
+               << "pause\n" << flush;
+
+      cout << "GLVis visualization paused."
+           << " Press space (in the GLVis window) to resume it.\n";
+      int num_frames = 32;
+      int i = 0;
+      while (sol_sock)
+      {
+         double t = (double)(i % num_frames) / num_frames;
+         ostringstream oss;
+         oss << "Harmonic Solution (t = " << t << " T)";
+
+         add(cos( 2.0 * M_PI * t), u.real(),
+             sin(-2.0 * M_PI * t), u.imag(), u_t);
+         sol_sock << "solution\n" << *mesh << u_t
+                  << "window_title '" << oss.str() << "'" << flush;
+         i++;
+      }
+   }
 
    // 15. Free the used memory.
    delete a;
+   delete u_exact;
    delete pcOp;
    delete fespace;
    delete fec;
