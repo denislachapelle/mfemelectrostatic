@@ -65,11 +65,10 @@ gmsh.model.addPhysicalGroup(2, [8], 10, name="airsurfaround")
 
 
 # We can then generate a 3D mesh...
-gmsh.model.mesh.generate(3)
+gmsh.model.mesh.generate()
+gmsh.model.mesh.refine()
+gmsh.model.mesh.refine()
 
-#gmsh.model.mesh.refine()
-#gmsh.model.mesh.refine()
-#gmsh.model.mesh.refine()
 
 
 # glvis can read mesh version 2.2

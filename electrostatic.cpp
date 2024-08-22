@@ -136,6 +136,15 @@ int main(int argc, char *argv[])
    u.ProjectBdrCoefficient(BoundaryCoeff, dbc_bdr);
    b.Assemble();
 
+SparseMatrix A;
+Vector B, X;
+a.FormLinearSystem(ess_tdof_list, u, b, A, X, B);
+Solver *solver = new CGSolver;
+solver->SetOperator(A);
+solver->Mult(B, X);
+
+/*
+
  cout << "step #9" << endl;
    // 9. Construct the linear system.
    OperatorPtr A;
@@ -147,6 +156,7 @@ int main(int argc, char *argv[])
    //     non-symmetric one.
         GSSmoother M((SparseMatrix&)(*A));
          PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
+*/         
  cout << "step #12" << endl;
 // 12. Recover the grid function corresponding to U. This is the local finite
 //     element solution.

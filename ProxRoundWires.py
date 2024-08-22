@@ -56,10 +56,9 @@ gmsh.model.addPhysicalGroup(2, [1], 1, name="conductorleft")
 gmsh.model.addPhysicalGroup(1, [6], 4, name="centervertical")
 
 
-# We can then generate a 2D mesh...
-gmsh.model.mesh.generate(2)
-
-#gmsh.model.mesh.refine()
+# We can then generate a 3D mesh...
+gmsh.model.mesh.generate(3)
+gmsh.model.mesh.refine()
 
 # glvis can read mesh version 2.2#
 gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)

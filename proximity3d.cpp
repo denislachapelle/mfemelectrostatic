@@ -1,341 +1,437 @@
-//                                proximity effect
-//                                inspired from MFEM Example 22
-//                                prob 2, case 1.
-//
-// this version is stripped down; go back to _saved once debugged.
+/*    Written by Denis Lachapelle July 2024.
+                            MFEM
 //
 // Compile with: make proximity3d
 //
-// Sample runs:  proximity3d
-//
-// Description:  This example code demonstrates the use of MFEM to define and
-//               solve simple complex-valued linear systems. 
-//
-//               2) A vector H(Curl) field
-//                  Curl(a Curl u) - omega^2 b u + i omega c u = 0
-//
 
-#include "mfem.hpp"
+The ultimate goal is to compute the proximity effect is a pair of wires in 3D.
+1- compute the current density in DC (static) in the domain.
+1a- compute the scalar voltage potential using ...
+1b- project the gradient of the scalar potential on RT or ND.
+2- use the aboe current density to compute the vector magnetic potential A.
+3- using the static current density and the current density caused by A compute the
+   total current density.
 
+-m <mesh file>, default "ProxRoundWires3d.msh".
+-o <order potential mesh element order>, default 1.
+-iro <integration order>, Default 1.
+-rt <refine to>, default 1.
+-rto <raviart thomas order>, default 1.
+
+*/
+
+/* These definitions fit with the mesh file ProxRoundWires3d.msh */
+#define air 1 //domain
+#define conductorright 2 //domain
+#define conductorleft 3  //domain
+#define airsurffront 4  //boundary
+#define airsurfback 5
+#define conductorleftsurffront 6
+#define conductorleftsurfback 7
+#define conductorrightsurffront 8
+#define conductorrightsurfback 9
+#define airsurfaround 10
+
+#include <mfem.hpp>
+#include <miniapps/common/fem_extras.hpp>
 #include <fstream>
 #include <iostream>
-
-#define airsurfaround 10
-#define airsurffront 4
-#define airsurfback 5
-#define conductorrightsurffront 8
-#define conductorleftsurffront 6
-#define air 1
-#define conductorright 2
-#define conductorleft 3
-#define conductorrightsurfback 9
-#define conductorleftsurfback 7
 
 using namespace std;
 using namespace mfem;
 
-static double mu_ = 1.25663706212E-6;
-static double epsilon_ = 8.8541878188E-12;
-static double sigma_ = 60E6;
-static double omega_ = 2.0*M_PI*60;
-
-static double mu0_ = 1.25663706212E-6;
-static double epsilon0_ = 8.8541878188E-12;
+double ComputeR(GridFunction &gf , int Boundary);
 
 int main(int argc, char *argv[])
 {
-   // 1. Parse command-line options.
-   const char *mesh_file = "ProxRoundWires3d.msh";
-   int ref_levels = 0;
-   int order = 1;
-   double freq = -1.0;
-   double a_coef = 0.0;
-   bool visualization = 1;
-   bool herm_conv = true;
-   const char *device_config = "cpu";
-
+   const char *mesh_file = "ProxRoundWires3d.msh"; //default mesh file.
+   int order = 1; // default order for potential elements.
+   int rt_order = order; // raviart thomas element order.
+   int refineTo = 1; // Default 1 cause no refinement.
    OptionsParser args(argc, argv);
-   args.AddOption(&mesh_file, "-m", "--mesh",
-                  "Mesh file to use.");
-   args.AddOption(&ref_levels, "-r", "--refine",
-                  "Number of times to refine the mesh uniformly.");
-   args.AddOption(&order, "-o", "--order",
-                  "Finite element order (polynomial degree).");
-   args.AddOption(&a_coef, "-a", "--stiffness-coef",
-                  "Stiffness coefficient (spring constant or 1/mu).");
-   args.AddOption(&epsilon_, "-b", "--mass-coef",
-                  "Mass coefficient (or epsilon).");
-   args.AddOption(&sigma_, "-c", "--damping-coef",
-                  "Damping coefficient (or sigma).");
-   args.AddOption(&mu_, "-mu", "--permeability",
-                  "Permeability of free space (or 1/(spring constant)).");
-   args.AddOption(&epsilon_, "-eps", "--permittivity",
-                  "Permittivity of free space (or mass constant).");
-   args.AddOption(&sigma_, "-sigma", "--conductivity",
-                  "Conductivity (or damping constant).");
-   args.AddOption(&freq, "-f", "--frequency",
-                  "Frequency (in Hz).");
-   args.AddOption(&herm_conv, "-herm", "--hermitian", "-no-herm",
-                  "--no-hermitian", "Use convention for Hermitian operators.");
-   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-                  "--no-visualization",
-                  "Enable or disable GLVis visualization.");
-   args.AddOption(&device_config, "-d", "--device",
-                  "Device configuration string, see Device::Configure().");
-   args.Parse();
-   if (!args.Good())
-   {
-      args.PrintUsage(cout);
-      return 1;
-   }
-   args.PrintOptions(cout);
+   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+   args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
+   args.AddOption(&refineTo, "-rt", "--refineto", "Refine to _ elements");
+   args.AddOption(&rt_order, "-rto", "--rt-order", "Raviat Thomas Element order");
+   args.ParseCheck();
 
-   if ( freq > 0.0 )
-   {
-      omega_ = 2.0 * M_PI * freq;
-   }
-
-   ComplexOperator::Convention conv =
-      herm_conv ? ComplexOperator::HERMITIAN : ComplexOperator::BLOCK_SYMMETRIC;
-
-   // 2. Enable hardware devices such as GPUs, and programming models such as
+   //  Enable hardware devices such as GPUs, and programming models such as
    //    CUDA, OCCA, RAJA and OpenMP based on command line options.
-   Device device(device_config);
+   Device device("cpu");
    device.Print();
 
-   // 3. Read the mesh from the given mesh file. We can handle triangular,
-   //    quadrilateral, tetrahedral, hexahedral, surface and volume meshes
-   //    with the same code.
-   Mesh *mesh = new Mesh(mesh_file, 1, 1);
-   int dim = mesh->Dimension();
+   //  Read the mesh from the given mesh file. We can handle triangular,
+   //  quadrilateral, tetrahedral, hexahedral, surface and volume meshes with
+   //  the same code.
+   Mesh mesh(mesh_file, 1, 1);
 
-   // 4. Refine the mesh to increase resolution. In this example we do
-   //    'ref_levels' of uniform refinement where the user specifies
-   //    the number of levels with the '-r' option.
-   for (int l = 0; l < ref_levels; l++)
+   //Refine the mesh, better to refine with the generator tool to improve section borders.
+   int RefineCount = 0;
+   while(mesh.GetNE()<refineTo) {
+      mesh.UniformRefinement();
+      RefineCount++;
+   } 
+   cout << "Refine " << RefineCount << " times."<<endl; 
+   
+   int dim = mesh.Dimension();
+
+   cout << "mesh.Dimension() = "<< mesh.Dimension() << endl;
+   cout << "mesh.GetNE() = "<< mesh.GetNE() << endl;
+   cout << "mesh.GetNBE() = "<< mesh.GetNBE() << endl;
+   cout << "mesh.GetNEdges() = "<< mesh.GetNEdges() << endl;
+   cout << "mesh.GetNFaces() = "<< mesh.GetNFaces() << endl;
+   cout << "mesh.bdr_attributes.Max() = "<< mesh.bdr_attributes.Max() << endl;
+
+   //  Define a finite element space on the mesh. Here we use 
+   //  continuous Lagrange finite elements, since we seek a scalar.
+    FiniteElementCollection *fec = (FiniteElementCollection*)new H1_FECollection(order, dim);
+    FiniteElementSpace fespace(&mesh, fec);
+    int size = fespace.GetTrueVSize();
+    cout << "Number of finite element unknowns: " << size << endl;
+   
+   // 4. Create "marker arrays" to define the portions of boundary associated
+   //    with each type of boundary condition. These arrays have an entry
+   //    corresponding to each boundary attribute.  Placing a '1' in entry i
+   //    marks attribute i+1 as being active, '0' is inactive.
+   //    in this case there are only dirichelet boundary.
+      
+   Array<int> dbc_bdr(mesh.bdr_attributes.Max());
+   cout << "mesh.bdr_attributes.Max() = " << mesh.bdr_attributes.Max() << endl;
+   assert(mesh.bdr_attributes.Max()==10);  // to fit the mesh file.
+   dbc_bdr = 1;
+   dbc_bdr[conductorright-1]=0;
+   dbc_bdr[conductorleft-1]=0;
+   dbc_bdr[air-1]=0;
+   // both airsurffront and airsurfback should not be forced boundary value
+   // to avoid very large gradient at the boundary.
+   dbc_bdr[airsurffront-1]=0; 
+   dbc_bdr[airsurfback-1]=0;
+   
+
+   Array<int> ess_tdof_list(0);
+   if (mesh.bdr_attributes.Size())
    {
-      mesh->UniformRefinement();
+      // For a continuous basis the linear system must be modified to enforce an
+      // essential (Dirichlet) boundary condition. 
+      fespace.GetEssentialTrueDofs(dbc_bdr, ess_tdof_list);
    }
 
-   cout << "mesh->Dimension() = "<< mesh->Dimension() << endl;
-   cout << "mesh->GetNE() = "<< mesh->GetNE() << endl;
-   cout << "mesh->GetNBE() = "<< mesh->GetNBE() << endl;
-   cout << "mesh->GetNEdges() = "<< mesh->GetNEdges() << endl;
-   cout << "mesh->GetNFaces() = "<< mesh->GetNFaces() << endl;
-   cout << "mesh->bdr_attributes.Max() = "<< mesh->bdr_attributes.Max() << endl;
-   
-   
-   FiniteElementCollection *fec = NULL;
-   fec = new ND_FECollection(order, dim); //Curl(curl()) integrator only with nedelec.
-   FiniteElementSpace *fespace = new FiniteElementSpace(mesh, fec);
-   cout << "Number of finite element unknowns: " << fespace->GetTrueVSize()
-        << endl;
+   //conduction air, copper, copper.
+   double CoeffArray[mesh.bdr_attributes.Max()]={0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+   Vector CoeffVector(CoeffArray, mesh.bdr_attributes.Max());
+   PWConstCoefficient Coeff(CoeffVector);
 
+   //  Define the solution vector u as a finite element grid function
+   //  corresponding to fespace. Initialize u with initial guess of zero.
+   GridFunction u(&fespace);
+   u = 0.0;
 
-   // 8. Define the solution vector u as a complex finite element grid function
-   //    corresponding to fespace.
-   ComplexGridFunction u(fespace);
-   u=0.0;
- 
-   Vector zeroVec(dim); zeroVec = 0.0; VectorConstantCoefficient zeroVecCoef(zeroVec);
-   
-// 6a. Determine the list essential boundaries and 
-// of conductors boundaries.
-// clb: conductor left back, f: front, r: right.
-   cout << "mesh->bdr_attributes.Size() = " << mesh->bdr_attributes.Size() << endl;
-   cout << "mesh->bdr_attributes.Max() = " << mesh->bdr_attributes.Max() << endl;
-   Array<int> ess_tdof_list, ess_bdr;  //essential.
-   Array<int> clb_brd_list, clb_bdr;   //conductor left back.
-   Array<int> crb_brd_list, crb_bdr;   //conductor right back.
-   Array<int> clf_brd_list, clf_bdr;   //conductor left front.
-   Array<int> crf_brd_list, crf_bdr;   //conductor right front.
-   if (mesh->bdr_attributes.Size())
-   {
-      ess_bdr.SetSize(mesh->bdr_attributes.Max());
-      clb_bdr.SetSize(mesh->bdr_attributes.Max());
-      crb_bdr.SetSize(mesh->bdr_attributes.Max());
-      clf_bdr.SetSize(mesh->bdr_attributes.Max());
-      crf_bdr.SetSize(mesh->bdr_attributes.Max());
-      assert(clb_bdr.Size() == 10);
-      ess_bdr = 0;
-      ess_bdr[airsurffront-1] = 1;
-      ess_bdr[airsurfback-1] = 1;
-      ess_bdr[airsurfaround-1] = 1;
-      clb_bdr = 0;
-      clb_bdr[conductorleftsurfback-1] = 1;
-      crb_bdr = 0;
-      crb_bdr[conductorrightsurfback-1] = 1;
-      clf_bdr = 0;
-      clf_bdr[conductorleftsurffront-1] = 1;
-      crf_bdr = 0;
-      crf_bdr[conductorrightsurffront-1] = 1;
+   //  Set up the bilinear form a(.,.) on the finite element space
+   //    corresponding to the Laplacian operator -Delta, by adding the Diffusion
+   //    domain integrator.
+   BilinearForm a(&fespace);
+   a.AddDomainIntegrator(new DiffusionIntegrator(Coeff));
+   a.Assemble();
 
-      fespace->GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
-   }
+   //  Assemble the linear form for the right hand side vector.
+   LinearForm b(&fespace);
 
-   //dl240529 
-   u.ProjectBdrCoefficientTangent(zeroVecCoef, zeroVecCoef, ess_bdr);
+   // Set the Dirichlet values in the solution vector
+   double BoundaryCoeffArray[mesh.bdr_attributes.Max()];
+   BoundaryCoeffArray[air-1]=0.0;
+   BoundaryCoeffArray[conductorright-1]=0.0;
+   BoundaryCoeffArray[conductorleft-1]=0.0;
+   BoundaryCoeffArray[airsurffront-1]=0.0;
+   BoundaryCoeffArray[airsurfback-1]=0.0;
+   BoundaryCoeffArray[conductorleftsurffront-1]=-1.0;  // -1.0 Volt.
+   BoundaryCoeffArray[conductorleftsurfback-1]=1.0;    // +1.0 Volt.
+   BoundaryCoeffArray[conductorrightsurffront-1]=1.0;
+   BoundaryCoeffArray[conductorrightsurfback-1]=-1.0;
+   BoundaryCoeffArray[airsurfaround-1]=0.0;
 
-   // 7. Set up the complex linear form b(.) which corresponds to the right-hand side of
-   //    the FEM linear system.
-   ComplexLinearForm b(fespace, conv);
-   b.Vector::operator=(0.0);
-
-   //Coefp and Coefn to set the neumann boundary condition on the conductors faces.
-   //This is in fact the current density that is set uniform on the conductors faces.
-   //Since we are in hamonic regime, this is like an AC current source.
-   Vector vp(3); vp[0]=0.0; vp[1]=1.0;vp[2]=0.0; VectorConstantCoefficient Coefp(vp);
-   Vector vn(3); vn[0]=0.0; vn[1]=-1.0;vn[2]=0.0; VectorConstantCoefficient Coefn(vn);
-   if(0) { Coefp.GetVec().Print();}
-   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefp),
-                           new VectorFEBoundaryTangentLFIntegrator(Coefp),
-                           clb_bdr);  //conductor left back.
-   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefn),
-                           new VectorFEBoundaryTangentLFIntegrator(Coefn),
-                           clf_bdr);  //conductor left front
-   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefp),
-                           new VectorFEBoundaryTangentLFIntegrator(Coefp),
-                           crb_bdr);   //conductor right back.
-   b.AddBoundaryIntegrator(new VectorFEBoundaryTangentLFIntegrator(Coefn),
-                           new VectorFEBoundaryTangentLFIntegrator(Coefn),
-                           crf_bdr);   //conductor right front.
- 
+   Vector BoundaryCoeffVector(BoundaryCoeffArray, mesh.bdr_attributes.Max());
+   PWConstCoefficient BoundaryCoeff(BoundaryCoeffVector);
+   u.ProjectBdrCoefficient(BoundaryCoeff, dbc_bdr);
    b.Assemble();
 
-   // 9. Set up the sesquilinear form a(.,.) on the finite element space
-   //    
-   //    1) A vector H(Curl) field
-   //       Curl(a Curl) - omega^2 b + i omega c
-   //
+   //  Construct the linear system.
+   OperatorPtr A;
+   Vector B, X;
+   a.FormLinearSystem(ess_tdof_list, u, b, A, X, B);
    
-   ConstantCoefficient a_Coef(1.0);
-   // b and c coefficient are dependant on the element attributes.
-   int NbrAttr = mesh->attributes.Size();
-   assert(NbrAttr == 3);
-   Vector b_Vector(NbrAttr);
-   b_Vector[conductorright-1] = -omega_ * omega_ * mu_ * epsilon_;  //copper.
-   b_Vector[conductorleft-1] = -omega_ * omega_ * mu_ * epsilon_;  //copper.
-   b_Vector[air-1] = -omega_ * omega_ * mu0_ * epsilon0_;  //air.
-   PWConstCoefficient b_Coef(b_Vector);
-   if(0) { b_Vector.Print();}
-   
-   Vector c_Vector(NbrAttr);
-   c_Vector[conductorright-1] = omega_ * mu_ * sigma_;   //copper.
-   c_Vector[conductorleft-1] = omega_ * mu_ * sigma_;   //copper.
-   c_Vector[air-1] = omega_ * mu0_ * 0.0;      //air.
-   PWConstCoefficient c_Coef(c_Vector);
-   if(0) { c_Vector.Print();}
-   
-   SesquilinearForm *a = new SesquilinearForm(fespace, conv);
-         a->AddDomainIntegrator(new CurlCurlIntegrator(a_Coef),
-                                NULL);
-         a->AddDomainIntegrator(new VectorFEMassIntegrator(b_Coef),
-                                new VectorFEMassIntegrator(c_Coef));
-
-   // 9a. Set up the bilinear form for the preconditioner corresponding to the
-   //     appropriate operator
-   //
-   //      1) A vector H(Curl) field
-   //         Curl(a Curl) + omega^2 b + omega c
-   //
-   BilinearForm *pcOp = new BilinearForm(fespace);
-         pcOp->AddDomainIntegrator(new CurlCurlIntegrator(a_Coef));
-         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(b_Coef));
-         pcOp->AddDomainIntegrator(new VectorFEMassIntegrator(c_Coef));
-
-   // 10. Assemble the form and the corresponding linear system, applying any
-   //     necessary transformations such as: assembly, eliminating boundary
-   //     conditions, conforming constraints for non-conforming AMR, etc.
-   a->Assemble();
-   pcOp->Assemble();
-
-   OperatorHandle A;
-   Vector B, U;
-
-   a->FormLinearSystem(ess_tdof_list, u, b, A, U, B);
-
-   cout << "Size of linear system: " << A->Width() << endl << endl;
-
-   // 11. Define and apply a GMRES solver for AU=B with a block diagonal
-   //     preconditioner based on the appropriate sparse smoother.
-   {
-      Array<int> blockOffsets;
-      blockOffsets.SetSize(3);
-      blockOffsets[0] = 0;
-      blockOffsets[1] = A->Height() / 2;
-      blockOffsets[2] = A->Height() / 2;
-      blockOffsets.PartialSum();
-
-      BlockDiagonalPreconditioner BDP(blockOffsets);
-
-      Operator * pc_r = NULL;
-      Operator * pc_i = NULL;
-      
-      OperatorHandle PCOp;
-      pcOp->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
-      pcOp->FormSystemMatrix(ess_tdof_list, PCOp);
-      pc_r = new GSSmoother(*PCOp.As<SparseMatrix>());
-      
-      double s = -1.0;
-      pc_i = new ScaledOperator(pc_r,
-                                (conv == ComplexOperator::HERMITIAN) ?
-                                s:-s);
-
-      BDP.SetDiagonalBlock(0, pc_r);
-      BDP.SetDiagonalBlock(1, pc_i);
-      BDP.owns_blocks = 1;
-
-      GMRESSolver gmres;
-      gmres.SetPreconditioner(BDP);
-      gmres.SetOperator(*A.Ptr());
-      gmres.SetRelTol(1e-12);
-      gmres.SetMaxIter(1000);
-      gmres.SetPrintLevel(1);
-      gmres.Mult(B, U);
-   }
-
-   // 12. Recover the solution as a finite element grid function and compute the
-   //     errors if the exact solution is known.
-   a->RecoverFEMSolution(U, b, u);
+   //  Define a simple symmetric Gauss-Seidel preconditioner and use it to
+   //     solve the system AX=B with PCG in the symmetric case, and GMRES in the
+   //     non-symmetric one.
+        GSSmoother M((SparseMatrix&)(*A));
+         PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
+ 
+//  Recover the grid function corresponding to U. This is the local finite
+//     element solution.
+   a.RecoverFEMSolution(X, b, u);
 
 
-   // 13. Save the refined mesh and the solution. This output can be viewed
-   //     later using GLVis: "glvis -m mesh -g sol".
-   {
-      ofstream mesh_ofs("refined.mesh");
-      mesh_ofs.precision(8);
-      mesh->Print(mesh_ofs);
-
-      ofstream sol_r_ofs("sol_r.gf");
-      ofstream sol_i_ofs("sol_i.gf");
-      sol_r_ofs.precision(8);
-      sol_i_ofs.precision(8);
-      u.real().Save(sol_r_ofs);
-      u.imag().Save(sol_i_ofs);
-   }
-
-   // 14. Send the solution by socket to a GLVis server.
-   if (visualization)
-   {
+   // 15. Send the potential solution by socket to a GLVis server.
+      string title_str = "H1";
       char vishost[] = "localhost";
       int  visport   = 19916;
-      socketstream sol_sock_r(vishost, visport);
-      socketstream sol_sock_i(vishost, visport);
-      sol_sock_r.precision(8);
-      sol_sock_i.precision(8);
-      sol_sock_r << "solution\n" << *mesh << u.real()
-                 << "window_title 'Solution: Real Part'" << flush;
-      sol_sock_i << "solution\n" << *mesh << u.imag()
-                 << "window_title 'Solution: Imaginary Part'" << flush;
+      socketstream sol_sock(vishost, visport);
+      sol_sock.precision(8);
+      sol_sock << "solution\n" << mesh << u
+               << "window_title '" << title_str << " Solution'"
+               << " keys 'mmc'" << flush;
+
+// **********************
+// **********************
+   cout << "*****\ncompute gradient\n*****\n" << endl;
+   rt_order = order-1;
+   // This section computes the gradient (field) using raviart thomas basis function.
+   RT_FECollection rt_fec(rt_order, dim);
+   FiniteElementSpace fespace_rt(&mesh, &rt_fec);
+   GridFunction D(&fespace_rt);  //trial space is RT.
+   {
+     LinearForm epsdT(&fespace_rt);
+     MixedBilinearForm epsGrad(&fespace, &fespace_rt);
+     epsGrad.AddDomainIntegrator(new MixedVectorGradientIntegrator(Coeff));
+     epsGrad.Assemble();
+     epsGrad.Finalize();
+     epsGrad.Mult(u, epsdT);
+
+     BilinearForm m_rt(&fespace_rt);
+     m_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
+     m_rt.Assemble();
+     m_rt.Finalize();
+
+     Array<int> ess_tdof_rt_list;
+     OperatorPtr A;
+     Vector B, X;
+
+     D = 0.0;
+     m_rt.FormLinearSystem(ess_tdof_rt_list, D, epsdT, A, X, B);
+
+     GSSmoother M((SparseMatrix&)(*A));
+     PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
+     m_rt.RecoverFEMSolution(X, epsdT, D);
+     D *= -1.0;
    }
 
-   // 15. Free the used memory.
-   delete a;
-   delete pcOp;
-   delete fespace;
-   delete fec;
-   delete mesh;
+  //Send the gradient solution by socket to a GLVis server.
+   {
+     string title_str = "Displacement Field";
+     char vishost[] = "localhost";
+     int  visport   = 19916;
+     socketstream sol_sock(vishost, visport);
+     sol_sock.precision(8);
+     sol_sock << "solution\n" << mesh << D
+	      << "window_title '" << title_str << " Solution'"
+	      << " keys 'mmcvv'" << flush;
+   }
 
+// from ex5.cpp  
+// 14. Save data in the VisIt format
+   VisItDataCollection visit_dc("two_wires", &mesh);
+   visit_dc.RegisterField("potential", &u);
+   visit_dc.RegisterField("gradient", &D);
+   visit_dc.Save();
+
+   // 15. Save data in the ParaView format
+   ParaViewDataCollection paraview_dc("two_wires_pw", &mesh);
+   paraview_dc.SetPrefixPath("ParaView");
+   paraview_dc.SetLevelsOfDetail(order);
+   paraview_dc.SetCycle(0);
+   paraview_dc.SetDataFormat(VTKFormat::BINARY);
+   paraview_dc.SetHighOrderOutput(true);
+   paraview_dc.SetTime(0.0); // set the time
+   paraview_dc.RegisterField("velocity",&D);
+   paraview_dc.RegisterField("pressure",&u);
+   paraview_dc.Save();
+
+   
+   
+// **********************
+// **********************
+   cout << "compute the currents in both wires at bothe extremities." << endl;
+   double Rconductorrightsurffront = ComputeR(D, conductorrightsurffront);
+   cout << "Rconductorrightsurffront = " << Rconductorrightsurffront << endl;
+   double Rconductorrightsurfback = ComputeR(D, conductorrightsurfback);
+   cout << "Rconductorrightsurfback = " << Rconductorrightsurfback << endl;
+   double Rconductorleftsurffront = ComputeR(D, conductorleftsurffront);
+   cout << "Rconductorleftsurffront = " << Rconductorleftsurffront << endl;
+   double Rconductorleftsurfback = ComputeR(D, conductorleftsurfback);
+   cout << "Rconductorleftsurfback = " << Rconductorleftsurfback << endl;
+
+
+
+   // 16. Free the used memory.
+   delete fec;
    return 0;
 }
 
+double ComputeR(GridFunction &gf, int Boundary)
+   {
+      mfem::FiniteElementSpace *sp = gf.FESpace();
+      mfem::Mesh *mesh = sp->GetMesh();
+      mfem::Array<int> Current_bdr(mesh->bdr_attributes.Max());
+      Current_bdr = 0;
+      assert((mesh->bdr_attributes.Max()) >= Boundary);
+      Current_bdr[Boundary-1]=1;
+      mfem::ConstantCoefficient one(1.0);
+      mfem::LinearForm Ifr_LF(sp);
+      Ifr_LF.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one), Current_bdr);      
+      Ifr_LF.Assemble();
+      double Current = (Ifr_LF)(gf);
+      return 2.0/Current;
+   }
+
+
+
+/*
+Function intgrad
+
+// This code compute the line integral of the gradient
+// of the potential computed with electrostatic.cpp.
+// the initial goal was to compare to the result obtain with 
+// the integration on raviart-thomas D-field to get the charge or capacitance.
+
+compute the lenght of the line.
+divide by the step to get the sample lenght.
+in a while loop based on lenght.
+check if there is one or more samples.
+then find the middle of the sample.
+get the grad and multiply by sample lenghtand and coeff and sum.
+*/
+
+double intgrad(double x0, double y0, double x1, double y1, double NbrStep, double delta, double *CoeffArray, GridFunction& u) {
+   double TotalLenght=2.0*((x1-x0)+(y1-y0));
+   double SampleLenght=TotalLenght/NbrStep;
+   double pos=x0, RunningLenght=0.0, x, y;
+   double CurrentSampleLenght;
+   double grad=0.0;
+   int j=0;
+   int NbrPoints=2;
+   Vector XYPoints(2*NbrPoints); //x, y.
+   enum STATE {BOTTOM_X, RIGHT_Y, TOP_X, LEFT_Y};
+   int state=BOTTOM_X;
+   while(RunningLenght<TotalLenght) {
+      switch(state) {
+
+         case BOTTOM_X:  // from (x0, y0) to the right.
+            y=y0;
+            if(pos+SampleLenght<=x1) {
+               x=pos+SampleLenght/2.0;
+               pos+=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               x=pos+(x1-pos)/2;
+               CurrentSampleLenght=x1-pos;
+               pos=y0;
+               state=RIGHT_Y;
+               }
+            XYPoints[0]=x;
+            XYPoints[1]=y-delta/2; 
+            XYPoints[2]=x;
+            XYPoints[3]=y+delta/2;
+            break;
+
+         case RIGHT_Y:  // from (x1, y0) to the up.
+            x=x1;
+            if(pos+SampleLenght<=y1) {
+               y=pos+SampleLenght/2.0;
+               pos+=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               y=pos+(y1-pos)/2.0;
+               CurrentSampleLenght=y1-pos;
+               pos=x1;
+               state=TOP_X;
+               }
+            XYPoints[2]=x-delta/2;
+            XYPoints[3]=y;
+            XYPoints[0]=x+delta/2;
+            XYPoints[1]=y;
+            break;
+            
+         case TOP_X:  //from (x1, y1) to the left.
+            y=y1;
+            if(pos-SampleLenght>=x0) {
+               x=pos-SampleLenght/2.0;
+               pos-=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               x=pos-(-x0+pos)/2.0;
+               CurrentSampleLenght=(-x0+pos);
+               pos=y1;
+               state=LEFT_Y;
+               }
+            XYPoints[2]=x;
+            XYPoints[3]=y-delta/2; 
+            XYPoints[0]=x;
+            XYPoints[1]=y+delta/2;
+            break;
+
+         case LEFT_Y:
+            x=x0;
+            if(pos-SampleLenght>=y0) {
+               y=pos-SampleLenght/2.0;
+               pos-=SampleLenght;
+               CurrentSampleLenght=SampleLenght;
+               }
+            else {
+               y=pos-(-y0+pos)/2.0;
+               CurrentSampleLenght=(-y0+pos);
+               pos=x0;
+               RunningLenght=TotalLenght+1;
+               }
+            XYPoints[0]=x-delta/2;
+            XYPoints[1]=y;
+            XYPoints[2]=x+delta/2;
+            XYPoints[3]=y;
+            break;
+         }
+      RunningLenght+=CurrentSampleLenght;
+
+
+   //Transfert the points in the matrix.
+   DenseMatrix point_mat(XYPoints.GetData(), 2, 2);
+
+   Array<int> elem_ids(NbrPoints); // el ement ids.
+   Array<IntegrationPoint> ips(NbrPoints);  // the location within the element.
+   //cout << "###, " << j++ << ", " << RunningLenght << " point_mat.Print(); = " << endl; 
+   //point_mat.Print();
+   Mesh * m = u.FESpace()->GetMesh();
+   assert(m->FindPoints(point_mat, elem_ids, ips)==2); // find the element and the point in the element.
+   double val[NbrPoints];
+
+   int attr[2];
+   attr[0]=m->GetAttribute(elem_ids[0]);
+   attr[1]=m->GetAttribute(elem_ids[1]);
+   
+
+   // get the value of each point one by one.
+   int i;
+   for(i=0; i< NbrPoints; i++) {
+      val[i] = u.GetValue(elem_ids[i], ips[i], 2);
+      }
+
+if(0) {
+   cout << j++  << ", "  << RunningLenght << ", " <<  CurrentSampleLenght << ", " << XYPoints[0] << ", " << XYPoints[1]
+        << ", " << val[0] << ", " << val[1]
+        << ", " << val[1]-val[0] << endl;
+        }
+
+if(0) {
+   cout << j++  << ", "  << XYPoints[1]
+        << ", " << val[0] << ", " << attr[0] << ", " << CoeffArray[attr[0]] << endl;
+        }
+
+   // attr[0]-1, -1 is necessary to align dielectric coefficients;
+   // but I do not fully understand why; i think it start to 1 instead of 0.
+   grad+=CoeffArray[attr[0]-1]*CurrentSampleLenght*(val[1]-val[0])/delta; 
+      }
+
+   return grad;
+
+
+   }
