@@ -13,7 +13,7 @@ The ultimate goal is to compute the proximity effect is a pair of wires in 3D.
 3- using the static current density and the current density caused by A compute the
    total current density.
 
-   Point 2 do not work since conversion from rt space to nd space do not work.
+   Point 2 do not work.
 
 -m <mesh file>, default "ProxRectRoundWires3d.msh".
 -po <order potential mesh element order>, default 1.
