@@ -2,7 +2,6 @@
                             MFEM
 //
 // Compile with: make proximity3d
-// It was commpiled with mfem-4.6
 //
 
 The ultimate goal is to compute the proximity effect is a pair of wires in 3D.
@@ -12,8 +11,6 @@ The ultimate goal is to compute the proximity effect is a pair of wires in 3D.
 2- use the above current density to compute the vector magnetic potential A.
 3- using the static current density and the current density caused by A compute the
    total current density.
-
-   Point 2 do not work since conversion from rt space to nd space do not work.
 
 -m <mesh file>, default "ProxRectRoundWires3d.msh".
 -po <order potential mesh element order>, default 1.
@@ -50,7 +47,7 @@ int main(int argc, char *argv[])
 {
    const char *meshFile = "ProxRectRoundWires3d.msh"; //default mesh file.
    int potentialOrder = 2; // default order for potential elements.
-   int eFieldOrder = 2; // raviart thomas element order.
+   int eFieldOrder = potentialOrder; // raviart thomas element order.
    int refineTo = 1; // Default 1 cause no refinement.
    OptionsParser args(argc, argv);
    args.AddOption(&meshFile, "-m", "--mesh", "Mesh file to use.");
@@ -191,10 +188,10 @@ int main(int argc, char *argv[])
 // **********************
 // **********************
    cout << "*****\ncompute gradient\n*****\n" << endl;
+   eFieldOrder = potentialOrder-1;  //not sure if it is ok.
    // This section computes the gradient (field) using raviart thomas basis function.
-   // now ND space.
-   FiniteElementCollection *eFieldFec = (FiniteElementCollection *) new ND_FECollection(eFieldOrder, meshDim);
-   FiniteElementSpace eFieldFESpace(&mesh, eFieldFec);
+   RT_FECollection eFieldFec(eFieldOrder, meshDim);
+   FiniteElementSpace eFieldFESpace(&mesh, &eFieldFec);
    GridFunction eFieldGridFunction(&eFieldFESpace);  //trial space is RT.
    {
      LinearForm eFieldLinearForm(&eFieldFESpace);
@@ -254,7 +251,7 @@ int main(int argc, char *argv[])
    paraview_dc.Save();
 
    
-   /*
+   
 // **********************
 // **********************
    cout << "compute the currents in both wires at bothe extremities." << endl;
@@ -266,124 +263,12 @@ int main(int argc, char *argv[])
    cout << "Rconductorleftsurffront = " << Rconductorleftsurffront << endl;
    double Rconductorleftsurfback = ComputeDCR(eFieldGridFunction, conductorleftsurfback);
    cout << "Rconductorleftsurfback = " << Rconductorleftsurfback << endl;
-     */ 
-   
    // 16. Free the used memory.
    delete potFec;
 
 // **********************
 // **********************
-   cout << "***** compute the H-field\n*****\n" << endl;
-/*
- The proximity effect equation in terms of vector magnetic potential...
- neglecting grad(phi).
-
-   (-1/u) * curl(curl(A)) - w^2 e A = J
-   K0 * curl(curl(A)) + K1 A = J
-   
-   
-
-*/
-
-static double mu_ = 1.257e-6;
-static double epsilon_ = 8.854E-12;
-static double sigma_ = 1.0/16.78e-9;
-static double omega_ = 2.0*M_PI*0.0;   // 0 for DC current.
-
-   FiniteElementCollection *aFieldFec = (FiniteElementCollection*)new ND_FECollection(potentialOrder, meshDim);
-   FiniteElementSpace aFieldFESpace(&mesh, aFieldFec);
-   int aFieldFESpaceSize = aFieldFESpace.GetTrueVSize();
-   cout << "Number of finite element unknowns aFESpace: " << aFieldFESpaceSize << endl;
-
-// Set the Dirichlet values in the solution vector, all zero.
-   double aFieldBoundaryCoeffArray[mesh.bdr_attributes.Max()] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-   Vector aFieldBoundaryCoeffVector(aFieldBoundaryCoeffArray, mesh.bdr_attributes.Max());
-   PWConstCoefficient aFieldBoundaryCoeff(aFieldBoundaryCoeffVector);
-
-   
-
-// set the marker.
-   Array<int> aFieldDirBdrMkr(mesh.bdr_attributes.Max());
-   aFieldDirBdrMkr = 0;
-   aFieldDirBdrMkr[airsurfaround-1]=1;
-   
-   Array<int> aFieldEssTdofList;
-   if (mesh.bdr_attributes.Size())
-   {
-      // For a continuous basis the linear system must be modified to enforce an
-      // essential (Dirichlet) boundary condition. 
-      aFieldFESpace.GetEssentialTrueDofs(aFieldDirBdrMkr, aFieldEssTdofList);
-   }
-
-   
-   VectorGridFunctionCoefficient jCoeff(&eFieldGridFunction);
-   LinearForm aFieldLinearForm(&aFieldFESpace);
-   aFieldLinearForm.AddDomainIntegrator(new VectorFEDomainLFIntegrator(jCoeff));
-   aFieldLinearForm.Assemble();
-   ofstream aFileLinearForm("LinearForm.txt", ios_base::out);
-   aFieldLinearForm.Print(aFileLinearForm, 10);
-
-   GridFunction aFieldGridFunction(&aFieldFESpace);
-   aFieldGridFunction.ProjectBdrCoefficient(aFieldBoundaryCoeff, aFieldDirBdrMkr);
-
-   ConstantCoefficient K0(-1.0/mu_);
-   ConstantCoefficient K1(-omega_ * omega_ * epsilon_);
-   BilinearForm aFieldBilinearForm(&aFieldFESpace);
-   aFieldBilinearForm.AddDomainIntegrator(new CurlCurlIntegrator(K0));
-   aFieldBilinearForm.AddDomainIntegrator(new VectorFEMassIntegrator(K1));
-   aFieldBilinearForm.Assemble();
-   //aFieldBilinearForm.Finalize();
-  
-  
-   if (1)
-   {
-      OperatorPtr A;
-      Vector B, X;
-      aFieldBilinearForm.FormLinearSystem(aFieldEssTdofList, aFieldGridFunction, aFieldLinearForm, A, X, B);
-      cout << "Size of linear system: " << A->Height() << endl;   
-
-      GSSmoother M((SparseMatrix&)(*A));
-      GMRESSolver gmres;
-      gmres.SetPrintLevel(1);
-      gmres.SetPreconditioner(M);
-      gmres.SetOperator(*A.Ptr());
-      gmres.SetRelTol(1e-12);
-      gmres.SetMaxIter(1000);
-      gmres.Mult(B, X);
-
-      
-      aFieldBilinearForm.RecoverFEMSolution(X, aFieldLinearForm, aFieldGridFunction);
-
-   }
-
-   if(0)
-   {
-      OperatorPtr A;
-      Vector B, X;
-      aFieldBilinearForm.FormLinearSystem(aFieldEssTdofList, aFieldGridFunction, aFieldLinearForm, A, X, B);
-      cout << "Size of linear system: " << A->Height() << endl;   
-
-      GSSmoother M((SparseMatrix&)(*A));
-      PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
-    
-      aFieldBilinearForm.RecoverFEMSolution(X, aFieldLinearForm, aFieldGridFunction);
-
-   }
-
-
-
- //Send the a field solution by socket to a GLVis server.
-   {
-     string title_str = "a-Field";
-     char vishost[] = "localhost";
-     int  visport   = 19916;
-     socketstream sol_sock(vishost, visport);
-     sol_sock.precision(8);
-     sol_sock << "solution\n" << mesh << aFieldGridFunction
-	      << "window_title '" << title_str << " Solution'"
-	      << " keys 'mmcvv'" << flush;
-   }
-
+   cout << "*****\compute the H-field\n*****\n" << endl;
 
    return 0;
 }
