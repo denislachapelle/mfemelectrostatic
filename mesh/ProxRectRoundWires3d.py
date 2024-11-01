@@ -74,7 +74,12 @@ gmsh.model.addPhysicalGroup(2, [21], 10, name="airsurfaround")
 
 
 # We can then generate a 3D mesh...
-gmsh.model.mesh.generate()
+gmsh.option.setNumber("Mesh.Algorithm", 6)
+gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+#gmsh.option.setNumber("Mesh.CheckSurfaceNormalValidity", 1)
+#gmsh.option.setNumber("Mesh.MinCircleNodes", 50)
+
+gmsh.model.mesh.generate(3)
 #gmsh.model.mesh.refine()
 #gmsh.model.mesh.refine()
 

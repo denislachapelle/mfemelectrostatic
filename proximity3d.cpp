@@ -8,18 +8,12 @@
 The ultimate goal is to compute the proximity effect is a pair of wires in 3D.
 1- compute the current density in DC (static) in the domain.
 1a- compute the scalar voltage potential using ...
-1b- project the gradient of the scalar potential on RT.
+1b- comput the gradient of the scalar potential on ND space and the current density.
 2- use the above current density to compute the vector magnetic potential A.
 3- using the static current density and the current density caused by A compute the
    total current density.
 
-   Point 2 do not work since conversion from rt space to nd space do not work.
-
--m <mesh file>, default "ProxRectRoundWires3d.msh".
--po <order potential mesh element order>, default 1.
--iro <integration order>, Default 1.
--rt <refine to>, default 1.
--rto <raviart thomas order>, default 1.
+   Point 2 do not work since I cant get convergence.
 
 */
 
@@ -55,7 +49,7 @@ int main(int argc, char *argv[])
    OptionsParser args(argc, argv);
    args.AddOption(&meshFile, "-m", "--mesh", "Mesh file to use.");
    args.AddOption(&potentialOrder, "-po", "--potOrder", "Finite element polynomial degree");
-   args.AddOption(&refineTo, "-rerfto", "--refineTo", "Refine to _ elements");
+   args.AddOption(&refineTo, "-refto", "--refineTo", "Refine to _ elements");
    args.AddOption(&eFieldOrder, "-efo", "--eFOrder", "Raviat Thomas Element order");
    args.ParseCheck();
 
@@ -69,7 +63,7 @@ int main(int argc, char *argv[])
    //  Read the mesh from the given mesh file. We can handle triangular,
    //  quadrilateral, tetrahedral, hexahedral, surface and volume meshes with
    //  the same code.
-   Mesh mesh(meshFile, 1, 1);
+   Mesh mesh(meshFile, 1, 1, true);
 
    //Refine the mesh, better to refine with the generator tool to improve section borders.
    int refineTimes = 0;
@@ -102,6 +96,7 @@ int main(int argc, char *argv[])
    //    corresponding to each boundary attribute.  Placing a '1' in entry i
    //    marks attribute i+1 as being active, '0' is inactive.
    //    in this case there are only dirichelet boundary.
+      
       
    Array<int> potDirBdrMkr(mesh.bdr_attributes.Max());
    cout << "mesh.bdr_attributes.Max() = " << mesh.bdr_attributes.Max() << endl;
@@ -151,8 +146,8 @@ int main(int argc, char *argv[])
    BoundaryCoeffArray[conductorleft-1]=0.0;
    BoundaryCoeffArray[airsurffront-1]=0.0;
    BoundaryCoeffArray[airsurfback-1]=0.0;
-   BoundaryCoeffArray[conductorleftsurffront-1]=-1.0;  // -1.0 Volt.
-   BoundaryCoeffArray[conductorleftsurfback-1]=1.0;    // +1.0 Volt.
+   BoundaryCoeffArray[conductorleftsurffront-1]=1.0;  // -1.0 Volt.
+   BoundaryCoeffArray[conductorleftsurfback-1]=-1.0;    // +1.0 Volt.
    BoundaryCoeffArray[conductorrightsurffront-1]=1.0;
    BoundaryCoeffArray[conductorrightsurfback-1]=-1.0;
    BoundaryCoeffArray[airsurfaround-1]=0.0;
@@ -234,13 +229,6 @@ int main(int argc, char *argv[])
 	      << " keys 'mmcvv'" << flush;
    }
 
-// from ex5.cpp  
-// 14. Save data in the VisIt format
-   VisItDataCollection visit_dc("two_wires", &mesh);
-   visit_dc.RegisterField("potential", &potGridFunction);
-   visit_dc.RegisterField("e-field", &eFieldGridFunction);
-   visit_dc.Save();
-
    // 15. Save data in the ParaView format
    ParaViewDataCollection paraview_dc("two_wires_pw", &mesh);
    paraview_dc.SetPrefixPath("ParaView");
@@ -268,12 +256,12 @@ int main(int argc, char *argv[])
    cout << "Rconductorleftsurfback = " << Rconductorleftsurfback << endl;
      */ 
    
-   // 16. Free the used memory.
-   delete potFec;
+   
+   
 
 // **********************
 // **********************
-   cout << "***** compute the H-field\n*****\n" << endl;
+   cout << "***** compute the magnetic vector potential\n*****\n" << endl;
 /*
  The proximity effect equation in terms of vector magnetic potential...
  neglecting grad(phi).
@@ -285,105 +273,189 @@ int main(int argc, char *argv[])
 
 */
 
+
+   ComplexOperator::Convention conv = ComplexOperator::HERMITIAN;
+   
+
 static double mu_ = 1.257e-6;
 static double epsilon_ = 8.854E-12;
 static double sigma_ = 1.0/16.78e-9;
-static double omega_ = 2.0*M_PI*0.0;   // 0 for DC current.
+static double omega_ = 2.0*M_PI*10000000.0;   // 0 for DC current.
 
-   FiniteElementCollection *aFieldFec = (FiniteElementCollection*)new ND_FECollection(potentialOrder, meshDim);
-   FiniteElementSpace aFieldFESpace(&mesh, aFieldFec);
-   int aFieldFESpaceSize = aFieldFESpace.GetTrueVSize();
+   FiniteElementCollection *aFieldFec = new ND_FECollection(potentialOrder, meshDim);
+   FiniteElementSpace *aFieldFESpace=new FiniteElementSpace(&mesh, aFieldFec);
+   int aFieldFESpaceSize = aFieldFESpace->GetTrueVSize();
    cout << "Number of finite element unknowns aFESpace: " << aFieldFESpaceSize << endl;
 
-// Set the Dirichlet values in the solution vector, all zero.
-   double aFieldBoundaryCoeffArray[mesh.bdr_attributes.Max()] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-   Vector aFieldBoundaryCoeffVector(aFieldBoundaryCoeffArray, mesh.bdr_attributes.Max());
-   PWConstCoefficient aFieldBoundaryCoeff(aFieldBoundaryCoeffVector);
 
    
+   // 7. Set up the linear form b(.) which corresponds to the right-hand side of
+   //    the FEM linear system.
+   ComplexLinearForm *aFieldComplexLinearForm=new ComplexLinearForm(aFieldFESpace, conv);
+   //aFieldComplexLinearForm.Vector::operator=(0.0);
 
-// set the marker.
+   VectorGridFunctionCoefficient jCoeff(&eFieldGridFunction);
+   assert(jCoeff.GetGridFunction() == &eFieldGridFunction);
+
+  // Vector testVec(meshDim); testVec[0]=0.0; testVec[1]=0.0; testVec[2]=1.0;
+  // VectorConstantCoefficient testVecCoef(testVec);
+
+   aFieldComplexLinearForm->AddDomainIntegrator(new VectorFEDomainLFIntegrator(jCoeff), NULL);
+  
+
+
+
+   
+// I am quite sure the problem is in the boundary conditions.
+// I should use vector coefficient.
+/*
+// Set the Dirichlet values in the solution vector, all zero.
+   double aFieldBoundaryCoeffArray[mesh.bdr_attributes.Max()] =
+           {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+   Vector aFieldBoundaryCoeffVector(aFieldBoundaryCoeffArray, mesh.bdr_attributes.Max());
+   PWConstCoefficient aFieldBoundaryCoeff(aFieldBoundaryCoeffVector);
+*/
+// set the Dirichelet marker.
    Array<int> aFieldDirBdrMkr(mesh.bdr_attributes.Max());
    aFieldDirBdrMkr = 0;
    aFieldDirBdrMkr[airsurfaround-1]=1;
-   
+
+
    Array<int> aFieldEssTdofList;
    if (mesh.bdr_attributes.Size())
    {
       // For a continuous basis the linear system must be modified to enforce an
       // essential (Dirichlet) boundary condition. 
-      aFieldFESpace.GetEssentialTrueDofs(aFieldDirBdrMkr, aFieldEssTdofList);
+      aFieldFESpace->GetEssentialTrueDofs(aFieldDirBdrMkr, aFieldEssTdofList);
    }
-
    
-   VectorGridFunctionCoefficient jCoeff(&eFieldGridFunction);
-   LinearForm aFieldLinearForm(&aFieldFESpace);
-   aFieldLinearForm.AddDomainIntegrator(new VectorFEDomainLFIntegrator(jCoeff));
-   aFieldLinearForm.Assemble();
-   ofstream aFileLinearForm("LinearForm.txt", ios_base::out);
-   aFieldLinearForm.Print(aFileLinearForm, 10);
 
-   GridFunction aFieldGridFunction(&aFieldFESpace);
-   aFieldGridFunction.ProjectBdrCoefficient(aFieldBoundaryCoeff, aFieldDirBdrMkr);
 
-   ConstantCoefficient K0(-1.0/mu_);
-   ConstantCoefficient K1(-omega_ * omega_ * epsilon_);
-   BilinearForm aFieldBilinearForm(&aFieldFESpace);
-   aFieldBilinearForm.AddDomainIntegrator(new CurlCurlIntegrator(K0));
-   aFieldBilinearForm.AddDomainIntegrator(new VectorFEMassIntegrator(K1));
-   aFieldBilinearForm.Assemble();
-   //aFieldBilinearForm.Finalize();
-  
-  
-   if (1)
-   {
-      OperatorPtr A;
-      Vector B, X;
-      aFieldBilinearForm.FormLinearSystem(aFieldEssTdofList, aFieldGridFunction, aFieldLinearForm, A, X, B);
-      cout << "Size of linear system: " << A->Height() << endl;   
 
-      GSSmoother M((SparseMatrix&)(*A));
+
+// 8. Define the solution vector u as a complex finite element grid function
+   //    corresponding to fespace. Initialize u with initial guess of 1+0i or
+   //    the exact solution if it is known.
+   ComplexGridFunction *aFieldComplexGridFunction = new ComplexGridFunction(aFieldFESpace);
+   Vector zeroVec(meshDim); zeroVec = 0.0;
+   VectorConstantCoefficient zeroVecCoef(zeroVec);
+   aFieldComplexGridFunction->ProjectBdrCoefficientTangent(zeroVecCoef, zeroVecCoef, aFieldEssTdofList);
+
+// 9. Set up the sesquilinear form a(.,.) on the finite element space
+   //    corresponding to the damped harmonic oscillator operator of the
+   //    appropriate type:
+   
+   //    1) A vector H(Curl) field
+   //       Curl(a Curl) - omega^2 b + i omega c
+   
+ConstantCoefficient K0(1.0/mu_); //(-1.0/mu_);
+ConstantCoefficient K1(-omega_ * omega_ * epsilon_);
+
+   SesquilinearForm *aFieldSesLinearForm = new SesquilinearForm(aFieldFESpace, conv);
+   aFieldSesLinearForm->AddDomainIntegrator(new CurlCurlIntegrator(K0), NULL);
+   aFieldSesLinearForm->AddDomainIntegrator(new VectorFEMassIntegrator(K1), NULL);
+
+// 9a. Set up the bilinear form for the preconditioner corresponding to the
+   //     appropriate operator
+   
+   //      1) A vector H(Curl) field
+   //         Curl(a Curl) + omega^2 b + omega c
+   
+   BilinearForm *aFieldBilinearForm = new BilinearForm(aFieldFESpace);
+   aFieldBilinearForm->AddDomainIntegrator(new CurlCurlIntegrator(K0));
+   aFieldBilinearForm->AddDomainIntegrator(new VectorFEMassIntegrator(K1));
+
+// 10. Assemble the form and the corresponding linear system, applying any
+   //     necessary transformations such as: assembly, eliminating boundary
+   //     conditions, conforming constraints for non-conforming AMR, etc.
+   aFieldComplexLinearForm->Assemble();
+   aFieldSesLinearForm->Assemble();
+   aFieldBilinearForm->Assemble();
+{
+   OperatorHandle A;
+   Vector B, U;
+
+   aFieldSesLinearForm->FormLinearSystem(aFieldEssTdofList, *aFieldComplexGridFunction, *aFieldComplexLinearForm, A, U, B);
+
+   cout << "Size of linear system: " << A->Width() << endl << endl;
+
+   // 11. Define and apply a GMRES solver for AU=B with a block diagonal
+   //     preconditioner based on the appropriate sparse smoother.
+   
+      Array<int> blockOffsets;
+      blockOffsets.SetSize(3);
+      blockOffsets[0] = 0;
+      blockOffsets[1] = A->Height() / 2;
+      blockOffsets[2] = A->Height() / 2;
+      blockOffsets.PartialSum();
+
+      BlockDiagonalPreconditioner BDP(blockOffsets);
+
+      Operator * pc_r = NULL;
+      Operator * pc_i = NULL;
+
+     
+         OperatorHandle PCOp;
+         aFieldBilinearForm->SetDiagonalPolicy(mfem::Operator::DIAG_ONE);
+         aFieldBilinearForm->FormSystemMatrix(aFieldEssTdofList, PCOp);
+         pc_r = new GSSmoother(*PCOp.As<SparseMatrix>()); // was GSS
+               
+      double s = -1.0;
+      pc_i = new ScaledOperator(pc_r,
+                                (conv == ComplexOperator::HERMITIAN) ?
+                                s:-s);
+
+      BDP.SetDiagonalBlock(0, pc_r);
+      BDP.SetDiagonalBlock(1, pc_i);
+      BDP.owns_blocks = 1;
+
       GMRESSolver gmres;
-      gmres.SetPrintLevel(1);
-      gmres.SetPreconditioner(M);
+      gmres.SetPreconditioner(BDP);
       gmres.SetOperator(*A.Ptr());
       gmres.SetRelTol(1e-12);
-      gmres.SetMaxIter(1000);
-      gmres.Mult(B, X);
+      gmres.SetMaxIter(200);
+      gmres.SetPrintLevel(1);
+      gmres.Mult(B, U);
+   
 
-      
-      aFieldBilinearForm.RecoverFEMSolution(X, aFieldLinearForm, aFieldGridFunction);
+   // 12. Recover the solution as a finite element grid function and compute the
+   //     errors if the exact solution is known.
+   aFieldSesLinearForm->RecoverFEMSolution(U, *aFieldComplexLinearForm, *aFieldComplexGridFunction);
+}
 
-   }
 
-   if(0)
+   // 13. Save the refined mesh and the solution. This output can be viewed
+   //     later using GLVis: "glvis -m mesh -g sol".
    {
-      OperatorPtr A;
-      Vector B, X;
-      aFieldBilinearForm.FormLinearSystem(aFieldEssTdofList, aFieldGridFunction, aFieldLinearForm, A, X, B);
-      cout << "Size of linear system: " << A->Height() << endl;   
+      ofstream mesh_ofs("refined.mesh");
+      mesh_ofs.precision(8);
+      mesh.Print(mesh_ofs);
 
-      GSSmoother M((SparseMatrix&)(*A));
-      PCG(*A, M, B, X, 1, 500, 1e-12, 0.0);
-    
-      aFieldBilinearForm.RecoverFEMSolution(X, aFieldLinearForm, aFieldGridFunction);
-
+      ofstream sol_r_ofs("sol_r.gf");
+      ofstream sol_i_ofs("sol_i.gf");
+      sol_r_ofs.precision(8);
+      sol_i_ofs.precision(8);
+      aFieldComplexGridFunction->real().Save(sol_r_ofs);
+      aFieldComplexGridFunction->imag().Save(sol_i_ofs);
    }
 
-
-
- //Send the a field solution by socket to a GLVis server.
+   // 14. Send the solution by socket to a GLVis server.
+   
    {
-     string title_str = "a-Field";
-     char vishost[] = "localhost";
-     int  visport   = 19916;
-     socketstream sol_sock(vishost, visport);
-     sol_sock.precision(8);
-     sol_sock << "solution\n" << mesh << aFieldGridFunction
-	      << "window_title '" << title_str << " Solution'"
-	      << " keys 'mmcvv'" << flush;
+      char vishost[] = "localhost";
+      int  visport   = 19916;
+      socketstream sol_sock_r(vishost, visport);
+      socketstream sol_sock_i(vishost, visport);
+      sol_sock_r.precision(8);
+      sol_sock_i.precision(8);
+      sol_sock_r << "solution\n" << mesh << aFieldComplexGridFunction->real()
+                 << "window_title 'Solution: Real Part'" << flush;
+      sol_sock_i << "solution\n" << mesh << aFieldComplexGridFunction->imag()
+                 << "window_title 'Solution: Imaginary Part'" << flush;
    }
 
+// 16. Free the used memory.
+   delete potFec;
 
    return 0;
 }
